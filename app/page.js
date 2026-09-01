@@ -3,14 +3,67 @@
 import { useEffect, useState } from "react";
 import { SiteHeader, SiteFooter } from "@/components/SiteHeader";
 import { LandingSections } from "@/components/LandingSections";
-import { loadSession } from "@/lib/session";
+import { BookingFlow } from "@/components/BookingFlow";
+import { Shop } from "@/components/Shop";
+import { ClientAuth } from "@/components/ClientAuth";
+import { loadSession, clearSession } from "@/lib/session";
 
-export default function HomePage() {
-  const [meta, setMeta] = useState(null);
+function PedidosTab() {
   const [session, setSession] = useState(null);
+  const [ready, setReady] = useState(false);
 
   useEffect(() => {
     setSession(loadSession());
+    setReady(true);
+  }, []);
+
+  if (!ready) {
+    return <div className="card"><p style={{ color: "var(--muted)" }}>Cargando…</p></div>;
+  }
+  if (!session) {
+    return (
+      <div className="card">
+        <ClientAuth
+          onAuth={setSession}
+          intro="Para hacer pedidos, identifícate: así quedan guardados a tu nombre y los recoges sin esperas."
+        />
+      </div>
+    );
+  }
+  return (
+    <div className="card">
+      <div className="topbar" style={{ marginBottom: 12 }}>
+        <p style={{ margin: 0, color: "var(--muted)" }}>
+          Pidiendo como{" "}
+          <strong style={{ color: "var(--gold-strong)" }}>{session.name}</strong>
+        </p>
+        <button
+          className="secondary small"
+          onClick={() => {
+            clearSession();
+            setSession(null);
+          }}
+        >
+          No soy yo
+        </button>
+      </div>
+      <Shop phone={session.phone} code={session.code} />
+      <p style={{ color: "var(--muted)", fontSize: "0.85rem", marginTop: 16 }}>
+        Los pedidos se recogen y pagan en la peluquería. Puedes verlos o
+        cancelarlos en{" "}
+        <a href="/mis-citas" style={{ color: "var(--gold-strong)" }}>Mis citas</a>.
+      </p>
+    </div>
+  );
+}
+
+export default function HomePage() {
+  const [meta, setMeta] = useState(null);
+  const [tab, setTab] = useState("reservar"); // reservar | pedidos
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("tab") === "pedidos") setTab("pedidos");
     fetch("/api/meta")
       .then((r) => r.json())
       .then(setMeta)
@@ -36,41 +89,32 @@ export default function HomePage() {
             {meta.business.googleReviewCount} reseñas
           </a>
         )}
-        <div style={{ display: "flex", gap: 10, justifyContent: "center", flexWrap: "wrap", marginTop: 18 }}>
-          <a href="/reservar"><button>📅 Reservar cita</button></a>
-          <a href="/pedidos"><button className="secondary">🛍️ Hacer un pedido</button></a>
-        </div>
-        {session ? (
-          <p style={{ color: "var(--muted)", marginTop: 14, fontSize: "0.9rem" }}>
-            Hola de nuevo, <strong style={{ color: "var(--gold-strong)" }}>{session.name}</strong> 👋{" "}
-            · <a href="/mis-citas" style={{ color: "var(--gold-strong)" }}>Ver mis citas</a>
-          </p>
-        ) : (
-          <p style={{ color: "var(--muted)", marginTop: 14, fontSize: "0.9rem" }}>
-            🕤 Abierto de 9:30 a 21:00 · Martes cerrado · 📞{" "}
-            <a href="tel:+34627556151" style={{ color: "var(--gold-strong)" }}>627 55 61 51</a>
-          </p>
-        )}
+        <p style={{ color: "var(--muted)", marginTop: 14, fontSize: "0.9rem" }}>
+          🕤 Abierto de 9:30 a 21:00 · Martes cerrado · 📞{" "}
+          <a href="tel:+34627556151" style={{ color: "var(--gold-strong)" }}>627 55 61 51</a>
+        </p>
       </div>
       <main className="container">
-        {(meta?.services?.length ?? 0) > 0 && (
-          <section className="landing-section" style={{ marginTop: 10 }}>
-            <h2 className="section-title">Servicios y precios</h2>
-            <div className="option-grid">
-              {meta.services.map((s) => (
-                <a key={s.id} href="/reservar" style={{ textDecoration: "none" }}>
-                  <div className="option-card" style={{ height: "100%" }}>
-                    <span className="name">{s.name}</span>
-                    <span className="meta">
-                      {s.duration_min} min ·{" "}
-                      <span className="price">{Number(s.price_eur).toFixed(2)} €</span>
-                    </span>
-                  </div>
-                </a>
-              ))}
-            </div>
-          </section>
-        )}
+        <div className="home-tabs" role="tablist">
+          <button
+            role="tab"
+            aria-selected={tab === "reservar"}
+            className={`home-tab ${tab === "reservar" ? "active" : ""}`}
+            onClick={() => setTab("reservar")}
+          >
+            📅 Reservar cita
+          </button>
+          <button
+            role="tab"
+            aria-selected={tab === "pedidos"}
+            className={`home-tab ${tab === "pedidos" ? "active" : ""}`}
+            onClick={() => setTab("pedidos")}
+          >
+            🛍️ Pedidos
+          </button>
+        </div>
+
+        {tab === "reservar" ? <BookingFlow meta={meta} /> : <PedidosTab />}
 
         {meta?.business && <LandingSections meta={meta} />}
       </main>

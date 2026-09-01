@@ -81,6 +81,10 @@ export function Shop({ phone, code, onOrdered }) {
           const qty = cart[p.id] ?? 0;
           return (
             <div key={p.id} className={`option-card ${qty > 0 ? "selected" : ""}`}>
+              {p.image_url && (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={p.image_url} alt={p.name} className="product-img" loading="lazy" />
+              )}
               <span className="name">{p.name}</span>
               {p.description && <span className="meta">{p.description}</span>}
               <span className="meta">

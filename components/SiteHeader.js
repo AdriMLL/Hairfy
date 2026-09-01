@@ -12,12 +12,6 @@ export function SiteHeader({ active }) {
           <Link href="/" className={active === "inicio" ? "active" : ""}>
             Inicio
           </Link>
-          <Link href="/reservar" className={active === "reservar" ? "active" : ""}>
-            Reservar
-          </Link>
-          <Link href="/pedidos" className={active === "pedidos" ? "active" : ""}>
-            Pedidos
-          </Link>
           <Link href="/mis-citas" className={active === "mis-citas" ? "active" : ""}>
             Mis citas
           </Link>

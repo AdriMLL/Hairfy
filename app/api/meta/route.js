@@ -12,7 +12,7 @@ export async function GET() {
     db.from("employees").select("id,name").eq("active", true).order("name"),
     db
       .from("products")
-      .select("id,name,description,price_eur,stock")
+      .select("id,name,description,price_eur,stock,image_url")
       .eq("active", true)
       .gt("stock", 0)
       .order("name"),

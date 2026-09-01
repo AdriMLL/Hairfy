@@ -1062,6 +1062,32 @@ function Products({ api }) {
     }
   }
 
+  async function uploadImage(id, e) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    if (file.size > 5 * 1024 * 1024) {
+      setError("La imagen no puede superar 5MB");
+      return;
+    }
+    setError("");
+    try {
+      const b64 = await new Promise((resolve, reject) => {
+        const r = new FileReader();
+        r.onload = () => resolve(String(r.result).split(",")[1]);
+        r.onerror = reject;
+        r.readAsDataURL(file);
+      });
+      await api("product-image", {
+        method: "POST",
+        body: JSON.stringify({ id, imageBase64: b64, contentType: file.type }),
+      });
+      reload();
+    } catch (e2) {
+      setError(e2.message);
+    }
+  }
+
   return (
     <div className="card">
       <h2>Productos en venta</h2>
@@ -1094,10 +1120,32 @@ function Products({ api }) {
       {data && (
         <div className="table-scroll">
           <table>
-            <thead><tr><th>Producto</th><th>Precio</th><th>Stock</th><th>Visible</th><th></th></tr></thead>
+            <thead><tr><th>Foto</th><th>Producto</th><th>Precio</th><th>Stock</th><th>Visible</th><th></th></tr></thead>
             <tbody>
               {data.map((p) => (
                 <tr key={p.id}>
+                  <td>
+                    <label htmlFor={`prod-img-${p.id}`} style={{ cursor: "pointer", margin: 0 }} title="Subir o cambiar foto">
+                      {p.image_url ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={p.image_url} alt={p.name} className="product-thumb" />
+                      ) : (
+                        <span
+                          className="product-thumb"
+                          style={{ display: "flex", alignItems: "center", justifyContent: "center", fontSize: "1.2rem", background: "var(--card-2)" }}
+                        >
+                          📷
+                        </span>
+                      )}
+                    </label>
+                    <input
+                      id={`prod-img-${p.id}`}
+                      type="file"
+                      accept="image/jpeg,image/png,image/webp"
+                      style={{ display: "none" }}
+                      onChange={(e) => uploadImage(p.id, e)}
+                    />
+                  </td>
                   <td>
                     {p.name}
                     {p.description && (

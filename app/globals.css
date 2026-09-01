@@ -213,6 +213,24 @@ button.block { width: 100%; }
 .option-card .meta { color: var(--muted); font-size: 0.85rem; font-weight: 500; }
 .option-card .price { color: var(--gold-strong); font-weight: 700; }
 
+.product-img {
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  margin-bottom: 6px;
+  display: block;
+}
+.product-thumb {
+  width: 52px;
+  height: 52px;
+  object-fit: cover;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  display: block;
+}
+
 .pills { display: flex; flex-wrap: wrap; gap: 10px; }
 .pill {
   padding: 10px 20px;
@@ -447,6 +465,32 @@ th { color: var(--muted); font-weight: 600; text-transform: uppercase; font-size
   border: 0;
   display: block;
   filter: grayscale(0.2) contrast(1.02);
+}
+
+/* ---------- Pestañas del Inicio ---------- */
+
+.home-tabs {
+  display: flex;
+  gap: 8px;
+  margin: 6px 0 18px;
+  background: var(--bg-soft);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 6px;
+}
+.home-tab {
+  flex: 1;
+  padding: 12px 10px;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font-weight: 700;
+  font-size: 1rem;
+}
+.home-tab:hover { color: var(--ink); filter: none; }
+.home-tab.active {
+  background: linear-gradient(135deg, var(--gold-strong), var(--gold-dark));
+  color: #17120b;
 }
 
 /* ---------- Panel de administración ---------- */

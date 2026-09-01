@@ -27,7 +27,7 @@ const RESOURCES = {
     updateFields: ["name", "phone"],
   },
   products: {
-    select: "id,name,description,price_eur,stock,active,created_at",
+    select: "id,name,description,price_eur,stock,active,image_url,image_path,created_at",
     insertFields: ["name", "description", "price_eur", "stock"],
     updateFields: ["name", "description", "price_eur", "stock", "active"],
   },
@@ -396,6 +396,50 @@ export async function POST(request, { params }) {
     return Response.json({ ok: true, appointmentId: appt.id, accessCode });
   }
 
+  if (resource === "product-image") {
+    // Foto de un producto: { id, imageBase64, contentType }
+    let body;
+    try {
+      body = await request.json();
+    } catch {
+      return Response.json({ error: "Petición no válida" }, { status: 400 });
+    }
+    const id = body?.id;
+    const contentType = ["image/jpeg", "image/png", "image/webp"].includes(body?.contentType)
+      ? body.contentType
+      : null;
+    const b64 = typeof body?.imageBase64 === "string" ? body.imageBase64 : "";
+    if (!id || !contentType || !b64 || b64.length > 8_000_000) {
+      return Response.json(
+        { error: "Imagen no válida (JPG/PNG/WebP, máx ~5MB)" },
+        { status: 400 }
+      );
+    }
+    const db3 = supabaseAdmin();
+    const { data: prod } = await db3
+      .from("products")
+      .select("id,image_path")
+      .eq("id", id)
+      .maybeSingle();
+    if (!prod) return Response.json({ error: "Producto no encontrado" }, { status: 404 });
+
+    const ext = contentType === "image/png" ? "png" : contentType === "image/webp" ? "webp" : "jpg";
+    const path = `productos/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+    const buffer = Buffer.from(b64, "base64");
+    const { error: upErr } = await db3.storage.from("gallery").upload(path, buffer, { contentType });
+    if (upErr) return Response.json({ error: "No se pudo subir la imagen" }, { status: 500 });
+    const { data: pub } = db3.storage.from("gallery").getPublicUrl(path);
+    const { error: uErr } = await db3
+      .from("products")
+      .update({ image_url: pub.publicUrl, image_path: path })
+      .eq("id", id);
+    if (uErr) return Response.json({ error: "No se pudo guardar la imagen" }, { status: 500 });
+    if (prod.image_path) {
+      await db3.storage.from("gallery").remove([prod.image_path]);
+    }
+    return Response.json({ ok: true, imageUrl: pub.publicUrl });
+  }
+
   if (resource === "gallery") {
     // Subida de foto: { imageBase64, contentType, caption }
     let body;
@@ -621,6 +665,13 @@ export async function DELETE(request, { params }) {
   if (resource === "appointments") {
     // Devolver el stock de productos ligados a la cita antes de borrarla
     await restockAppointment(db, id);
+  }
+
+  if (resource === "products") {
+    const { data: prod } = await db.from("products").select("image_path").eq("id", id).maybeSingle();
+    if (prod?.image_path) {
+      await db.storage.from("gallery").remove([prod.image_path]);
+    }
   }
 
   if (resource === "clients") {
