@@ -20,7 +20,7 @@ const RESOURCES = {
     updateFields: ["name", "active"],
   },
   clients: {
-    select: "id,name,phone,created_at",
+    select: "id,name,phone,access_code,created_at",
     insertFields: [],
     updateFields: ["name", "phone"],
   },

@@ -2,6 +2,23 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { supabaseBrowser } from "@/lib/supabaseBrowser";
+import { Logo } from "@/components/Logo";
+
+function AdminHeader({ children }) {
+  return (
+    <header className="site-header">
+      <div className="site-header-inner">
+        <span className="logo-link">
+          <Logo />
+        </span>
+        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+          <span style={{ color: "var(--muted)", fontSize: "0.9rem" }}>Administración</span>
+          {children}
+        </div>
+      </div>
+    </header>
+  );
+}
 
 function todayStr() {
   return new Date().toISOString().slice(0, 10);
@@ -42,7 +59,7 @@ function Login() {
 
   return (
     <>
-      <header className="site"><h1>Hairfy · Administración</h1></header>
+      <AdminHeader />
       <main className="container" style={{ maxWidth: 420 }}>
         <form className="card" onSubmit={submit}>
           <h2>Iniciar sesión</h2>
@@ -84,15 +101,12 @@ function Dashboard({ session }) {
 
   return (
     <>
-      <header className="site">
-        <div className="container topbar" style={{ padding: 0 }}>
-          <h1>Hairfy · Administración</h1>
-          <button className="secondary small" onClick={() => supabaseBrowser().auth.signOut()}>
-            Cerrar sesión
-          </button>
-        </div>
-      </header>
-      <main className="container">
+      <AdminHeader>
+        <button className="secondary small" onClick={() => supabaseBrowser().auth.signOut()}>
+          Cerrar sesión
+        </button>
+      </AdminHeader>
+      <main className="container" style={{ maxWidth: 960 }}>
         <div className="tabs">
           {[
             ["agenda", "Agenda"],
@@ -160,6 +174,7 @@ function Agenda({ api }) {
       ) : data.length === 0 ? (
         <p style={{ color: "var(--muted)", marginTop: 16 }}>No hay citas este día.</p>
       ) : (
+        <div className="table-scroll">
         <table>
           <thead>
             <tr>
@@ -194,6 +209,7 @@ function Agenda({ api }) {
             ))}
           </tbody>
         </table>
+        </div>
       )}
     </div>
   );
@@ -354,18 +370,21 @@ function Clients({ api }) {
       <input id="client-search" placeholder="Nombre o teléfono" value={q} onChange={(e) => setQ(e.target.value)} />
       {error && <p className="msg-error">{error}</p>}
       {data && (
-        <table>
-          <thead><tr><th>Nombre</th><th>Teléfono</th><th>Cliente desde</th></tr></thead>
-          <tbody>
-            {filtered.map((c) => (
-              <tr key={c.id}>
-                <td>{c.name}</td>
-                <td>{c.phone}</td>
-                <td>{new Date(c.created_at).toLocaleDateString("es-ES")}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+        <div className="table-scroll">
+          <table>
+            <thead><tr><th>Nombre</th><th>Teléfono</th><th>Código</th><th>Cliente desde</th></tr></thead>
+            <tbody>
+              {filtered.map((c) => (
+                <tr key={c.id}>
+                  <td>{c.name}</td>
+                  <td>{c.phone}</td>
+                  <td style={{ color: "var(--gold-strong)", fontWeight: 600 }}>{c.access_code || "—"}</td>
+                  <td>{new Date(c.created_at).toLocaleDateString("es-ES")}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
     </div>
   );

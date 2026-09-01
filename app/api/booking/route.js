@@ -1,5 +1,6 @@
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { availableSlots, isValidDateStr, isBookableDate, localToUtc } from "@/lib/availability";
+import { generateAccessCode, normalizePhone } from "@/lib/code";
 
 export const dynamic = "force-dynamic";
 
@@ -16,7 +17,7 @@ export async function POST(request) {
 
   const { serviceId, employeeId, date, startsAt } = body || {};
   const name = typeof body?.name === "string" ? body.name.trim().slice(0, 80) : "";
-  const phone = typeof body?.phone === "string" ? body.phone.replace(/[^\d+ ]/g, "").trim().slice(0, 20) : "";
+  const phone = normalizePhone(body?.phone);
 
   if (!serviceId || !employeeId || !isValidDateStr(date) || !startsAt) {
     return Response.json({ error: "Faltan datos de la reserva" }, { status: 400 });
@@ -62,19 +63,38 @@ export async function POST(request) {
     );
   }
 
-  // Cliente: buscar por teléfono o crearlo
+  // Cliente: buscar por teléfono o crearlo (con su código de acceso)
   let clientId;
-  const { data: existing } = await db.from("clients").select("id").eq("phone", phone).maybeSingle();
+  let accessCode;
+  const { data: existing } = await db
+    .from("clients")
+    .select("id,access_code")
+    .eq("phone", phone)
+    .maybeSingle();
   if (existing) {
     clientId = existing.id;
-    await db.from("clients").update({ name }).eq("id", clientId);
+    accessCode = existing.access_code;
+    const updates = { name };
+    if (!accessCode) {
+      accessCode = generateAccessCode();
+      updates.access_code = accessCode;
+    }
+    await db.from("clients").update(updates).eq("id", clientId);
   } else {
-    const { data: created, error: cErr } = await db
-      .from("clients")
-      .insert({ name, phone })
-      .select("id")
-      .single();
-    if (cErr) {
+    let created = null;
+    for (let intento = 0; intento < 3 && !created; intento++) {
+      accessCode = generateAccessCode();
+      const { data, error: cErr } = await db
+        .from("clients")
+        .insert({ name, phone, access_code: accessCode })
+        .select("id")
+        .single();
+      if (data) created = data;
+      else if (cErr && cErr.code !== "23505") {
+        return Response.json({ error: "No se pudo guardar el cliente" }, { status: 500 });
+      }
+    }
+    if (!created) {
       return Response.json({ error: "No se pudo guardar el cliente" }, { status: 500 });
     }
     clientId = created.id;
@@ -103,5 +123,10 @@ export async function POST(request) {
     return Response.json({ error: "No se pudo crear la cita" }, { status: 500 });
   }
 
-  return Response.json({ ok: true, appointmentId: appt.id, startsAt: appt.starts_at });
+  return Response.json({
+    ok: true,
+    appointmentId: appt.id,
+    startsAt: appt.starts_at,
+    accessCode,
+  });
 }

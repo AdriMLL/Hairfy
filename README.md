@@ -4,9 +4,17 @@ App web sencilla y segura para que los clientes reserven cita online y la
 peluquería gestione su agenda.
 
 - **Página pública** (`/`): el cliente elige servicio, profesional, día y hora
-  libre, deja su nombre y teléfono, y la cita queda confirmada.
+  libre, deja su nombre y teléfono, y la cita queda confirmada. Al reservar
+  recibe un código de cliente (tipo `HF-7K3M`).
+- **Mis citas** (`/mis-citas`): con su teléfono + código, el cliente consulta
+  sus citas y puede cancelarlas online hasta 2 horas antes (configurable en
+  `lib/config.js`).
 - **Panel de administración** (`/admin`): con login. Agenda del día, cancelar
-  citas, gestionar servicios (precio/duración), empleados y ver clientes.
+  citas, gestionar servicios (precio/duración), empleados y ver clientes (con
+  su código, por si alguien lo pierde).
+
+> Si vienes de la versión 1, ejecuta también
+> `supabase/migracion-2-codigo-cliente.sql` en el SQL Editor de Supabase.
 
 **Stack:** Next.js (React) + Supabase (base de datos PostgreSQL + login).
 Todo funciona con los planes **gratuitos** de Vercel y Supabase.
