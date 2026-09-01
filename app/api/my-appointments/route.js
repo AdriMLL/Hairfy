@@ -36,6 +36,12 @@ export async function POST(request) {
 
   const db = supabaseAdmin();
   const since = new Date(Date.now() - 30 * 86400000).toISOString();
+  const ordersPromise = db
+    .from("orders")
+    .select("id,status,created_at,order_items(quantity,price_eur,products(name))")
+    .eq("client_id", client.id)
+    .order("created_at", { ascending: false })
+    .limit(20);
   const { data, error } = await db
     .from("appointments")
     .select(
@@ -72,7 +78,23 @@ export async function POST(request) {
       (a.reviews?.length ?? 0) === 0,
   }));
 
-  return Response.json({ name: client.name, appointments });
+  const { data: ordersData } = await ordersPromise;
+  const orders = (ordersData || []).map((o) => ({
+    id: o.id,
+    status: o.status,
+    createdAt: o.created_at,
+    items: (o.order_items || []).map((it) => ({
+      name: it.products?.name,
+      quantity: it.quantity,
+      price: it.price_eur,
+    })),
+    total: (o.order_items || []).reduce(
+      (acc, it) => acc + Number(it.price_eur) * it.quantity,
+      0
+    ),
+  }));
+
+  return Response.json({ name: client.name, appointments, orders });
 }
 
 // PATCH: cancela una cita del cliente (hasta cancelMinHours antes)

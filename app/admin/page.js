@@ -110,6 +110,7 @@ function Dashboard({ session }) {
         <div className="tabs">
           {[
             ["agenda", "Agenda"],
+            ["orders", "Pedidos"],
             ["stats", "Estadísticas"],
             ["services", "Servicios"],
             ["products", "Productos"],
@@ -125,6 +126,7 @@ function Dashboard({ session }) {
           ))}
         </div>
         {tab === "agenda" && <Agenda api={api} />}
+        {tab === "orders" && <Orders api={api} />}
         {tab === "stats" && <Stats api={api} />}
         {tab === "services" && <Services api={api} />}
         {tab === "products" && <Products api={api} />}
@@ -301,6 +303,82 @@ function Services({ api }) {
             ))}
           </tbody>
         </table>
+      )}
+    </div>
+  );
+}
+
+// ---------- Pedidos ----------
+
+function Orders({ api }) {
+  const { data, error, setError, reload } = useList(api, "orders");
+
+  async function setStatus(id, status) {
+    try {
+      await api("orders", { method: "PATCH", body: JSON.stringify({ id, status }) });
+      reload();
+    } catch (e2) {
+      setError(e2.message);
+    }
+  }
+
+  const total = (o) =>
+    (o.order_items || []).reduce((acc, it) => acc + Number(it.price_eur) * it.quantity, 0);
+
+  return (
+    <div className="card">
+      <h2>Pedidos de productos</h2>
+      <p style={{ color: "var(--muted)", marginTop: 0, fontSize: "0.9rem" }}>
+        Los clientes hacen pedidos desde "Mis citas" y los pagan al recogerlos.
+        Márcalos como entregados cuando se los lleven.
+      </p>
+      {error && <p className="msg-error">{error}</p>}
+      {data && data.length === 0 && <p style={{ color: "var(--muted)" }}>No hay pedidos todavía.</p>}
+      {data && data.length > 0 && (
+        <div className="table-scroll">
+          <table>
+            <thead>
+              <tr><th>Fecha</th><th>Cliente</th><th>Productos</th><th>Total</th><th>Estado</th><th></th></tr>
+            </thead>
+            <tbody>
+              {data.map((o) => (
+                <tr key={o.id} style={o.status === "cancelled" ? { opacity: 0.55 } : undefined}>
+                  <td>{new Date(o.created_at).toLocaleDateString("es-ES", { day: "numeric", month: "short" })}</td>
+                  <td>
+                    {o.clients?.name}
+                    <div style={{ color: "var(--muted)", fontSize: "0.8rem" }}>{o.clients?.phone}</div>
+                  </td>
+                  <td>
+                    {(o.order_items || []).map((it) => `${it.products?.name} x${it.quantity}`).join(", ")}
+                  </td>
+                  <td style={{ color: "var(--gold-strong)", fontWeight: 700 }}>{total(o).toFixed(2)} €</td>
+                  <td>
+                    <span className={`badge ${o.status === "cancelled" ? "cancelled" : ""}`}>
+                      {o.status === "pending" ? "Pendiente" : o.status === "delivered" ? "Entregado" : "Cancelado"}
+                    </span>
+                  </td>
+                  <td style={{ whiteSpace: "nowrap" }}>
+                    {o.status === "pending" && (
+                      <>
+                        <button className="small" style={{ marginRight: 6 }} onClick={() => setStatus(o.id, "delivered")}>
+                          Entregado
+                        </button>
+                        <button className="danger small" onClick={() => setStatus(o.id, "cancelled")}>
+                          Cancelar
+                        </button>
+                      </>
+                    )}
+                    {o.status === "delivered" && (
+                      <button className="secondary small" onClick={() => setStatus(o.id, "pending")}>
+                        Volver a pendiente
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
     </div>
   );

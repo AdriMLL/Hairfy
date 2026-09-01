@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { SiteHeader, SiteFooter } from "@/components/SiteHeader";
 
 function fmtWhen(iso) {
@@ -46,6 +46,88 @@ export default function MisCitasPage() {
   const [reviewFor, setReviewFor] = useState(null); // id de cita a valorar
   const [rating, setRating] = useState(0);
   const [comment, setComment] = useState("");
+
+  // --- Pedidos de productos ---
+  const [products, setProducts] = useState([]);
+  const [showShop, setShowShop] = useState(false);
+  const [cart, setCart] = useState({}); // { productId: cantidad }
+
+  useEffect(() => {
+    fetch("/api/meta")
+      .then((r) => r.json())
+      .then((m) => setProducts(m.products || []))
+      .catch(() => {});
+  }, []);
+
+  function changeQty(product, delta) {
+    setCart((c) => {
+      const current = c[product.id] ?? 0;
+      const next = Math.max(0, Math.min(Math.min(5, product.stock), current + delta));
+      const copy = { ...c };
+      if (next === 0) delete copy[product.id];
+      else copy[product.id] = next;
+      return copy;
+    });
+  }
+
+  const cartItems = products
+    .filter((p) => cart[p.id])
+    .map((p) => ({ ...p, qty: cart[p.id] }));
+  const cartTotal = cartItems.reduce((acc, it) => acc + Number(it.price_eur) * it.qty, 0);
+
+  async function sendOrder() {
+    setError("");
+    setNotice("");
+    setLoading(true);
+    try {
+      const res = await fetch("/api/orders", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          phone,
+          code,
+          items: cartItems.map((it) => ({ productId: it.id, quantity: it.qty })),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) setError(data.error || "No se pudo crear el pedido");
+      else {
+        setNotice("¡Pedido realizado! Recógelo y págalo en la peluquería.");
+        setCart({});
+        setShowShop(false);
+        const m = await fetch("/api/meta").then((r) => r.json());
+        setProducts(m.products || []);
+        await lookup();
+      }
+    } catch {
+      setError("Error de conexión. Inténtalo de nuevo.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function cancelOrder(orderId) {
+    if (!window.confirm("¿Cancelar este pedido?")) return;
+    setError("");
+    setLoading(true);
+    try {
+      const res = await fetch("/api/orders", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phone, code, orderId }),
+      });
+      const data = await res.json();
+      if (!res.ok) setError(data.error || "No se pudo cancelar el pedido");
+      else {
+        setNotice("Pedido cancelado.");
+        await lookup();
+      }
+    } catch {
+      setError("Error de conexión. Inténtalo de nuevo.");
+    } finally {
+      setLoading(false);
+    }
+  }
 
   async function sendReview(e) {
     e.preventDefault();
@@ -146,10 +228,87 @@ export default function MisCitasPage() {
           </form>
         ) : (
           <div className="card">
-            <h2 style={{ marginTop: 0 }}>Hola, {result.name} 👋</h2>
+            <div className="topbar">
+              <h2 style={{ margin: 0 }}>Hola, {result.name} 👋</h2>
+              <button
+                className="secondary small"
+                onClick={() => {
+                  setResult(null);
+                  setNotice("");
+                  setError("");
+                  setShowShop(false);
+                }}
+              >
+                Salir
+              </button>
+            </div>
+
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 16 }}>
+              <a href={`/?name=${encodeURIComponent(result.name)}&phone=${encodeURIComponent(phone)}`}>
+                <button>📅 Pedir cita</button>
+              </a>
+              {products.length > 0 && (
+                <button className="secondary" onClick={() => setShowShop((s) => !s)}>
+                  🛍️ {showShop ? "Cerrar tienda" : "Hacer pedido"}
+                </button>
+              )}
+            </div>
+
             {notice && <p className="msg-ok">{notice}</p>}
             {error && <p className="msg-error">{error}</p>}
 
+            {showShop && (
+              <div style={{ marginTop: 18 }}>
+                <h3 style={{ margin: "0 0 10px" }}>Nuestros productos</h3>
+                <div className="option-grid">
+                  {products.map((p) => {
+                    const qty = cart[p.id] ?? 0;
+                    return (
+                      <div key={p.id} className={`option-card ${qty > 0 ? "selected" : ""}`}>
+                        <span className="name">{p.name}</span>
+                        {p.description && <span className="meta">{p.description}</span>}
+                        <span className="meta">
+                          <span className="price">{Number(p.price_eur).toFixed(2)} €</span>
+                          {p.stock <= 3 && (
+                            <span style={{ color: "var(--danger)" }}> · ¡quedan {p.stock}!</span>
+                          )}
+                        </span>
+                        <div className="qty-row">
+                          <button type="button" className="qty-btn" onClick={() => changeQty(p, -1)} disabled={qty === 0}>
+                            −
+                          </button>
+                          <span className="qty-num">{qty}</span>
+                          <button
+                            type="button"
+                            className="qty-btn"
+                            onClick={() => changeQty(p, 1)}
+                            disabled={qty >= Math.min(5, p.stock)}
+                          >
+                            +
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                {cartItems.length > 0 && (
+                  <>
+                    <div className="summary">
+                      {cartItems.map((it) => `${it.name} x${it.qty}`).join(" · ")}
+                      <br />
+                      Total: <strong>{cartTotal.toFixed(2)} €</strong> · se paga al recoger
+                    </div>
+                    <div style={{ marginTop: 12 }}>
+                      <button onClick={sendOrder} disabled={loading}>
+                        {loading ? "Enviando…" : "Confirmar pedido 🛍️"}
+                      </button>
+                    </div>
+                  </>
+                )}
+              </div>
+            )}
+
+            <h3 style={{ margin: "24px 0 4px" }}>Mis citas</h3>
             {result.appointments.length === 0 ? (
               <p style={{ color: "var(--muted)" }}>
                 No tienes citas registradas en los últimos 30 días. ¿Reservamos
@@ -260,21 +419,48 @@ export default function MisCitasPage() {
               </>
             )}
 
-            <div style={{ marginTop: 20, display: "flex", gap: 10, flexWrap: "wrap" }}>
-              <a href="/">
-                <button className="secondary">Reservar otra cita</button>
-              </a>
-              <button
-                className="secondary"
-                onClick={() => {
-                  setResult(null);
-                  setNotice("");
-                  setError("");
-                }}
-              >
-                Salir
-              </button>
-            </div>
+            {(result.orders?.length ?? 0) > 0 && (
+              <>
+                <h3 style={{ margin: "26px 0 4px" }}>Mis pedidos</h3>
+                <div className="appt-list">
+                  {result.orders.map((o) => (
+                    <div key={o.id} className={`appt ${o.status === "cancelled" ? "cancelled" : ""}`}>
+                      <div>
+                        <div className="when">
+                          {new Date(o.createdAt).toLocaleDateString("es-ES", {
+                            day: "numeric",
+                            month: "long",
+                          })}{" "}
+                          · {o.total.toFixed(2)} €
+                        </div>
+                        <div className="what">
+                          {o.items.map((it) => `${it.name} x${it.quantity}`).join(", ")}
+                        </div>
+                        <div className="who">Se recoge y paga en la peluquería</div>
+                      </div>
+                      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                        <span className={`badge ${o.status === "cancelled" ? "cancelled" : ""}`}>
+                          {o.status === "pending"
+                            ? "Pendiente de recoger"
+                            : o.status === "delivered"
+                              ? "Entregado"
+                              : "Cancelado"}
+                        </span>
+                        {o.status === "pending" && (
+                          <button
+                            className="danger small"
+                            disabled={loading}
+                            onClick={() => cancelOrder(o.id)}
+                          >
+                            Cancelar
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </>
+            )}
           </div>
         )}
       </main>

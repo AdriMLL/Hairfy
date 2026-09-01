@@ -34,6 +34,7 @@ const RESOURCES = {
   settings: null, // gestionado aparte (validación específica)
   reviews: null, // gestionado aparte (joins + aprobación)
   gallery: null, // gestionado aparte (Storage)
+  orders: null, // gestionado aparte (estado + restock)
 };
 
 function pick(body, fields) {
@@ -138,6 +139,16 @@ export async function GET(request, { params }) {
       .order("created_at", { ascending: false })
       .limit(100);
     if (error) return Response.json({ error: "Error al cargar la galería" }, { status: 500 });
+    return Response.json({ data });
+  }
+
+  if (resource === "orders") {
+    const { data, error } = await db
+      .from("orders")
+      .select("id,status,created_at,clients(name,phone),order_items(quantity,price_eur,products(name))")
+      .order("created_at", { ascending: false })
+      .limit(200);
+    if (error) return Response.json({ error: "Error al cargar pedidos" }, { status: 500 });
     return Response.json({ data });
   }
 
@@ -310,6 +321,42 @@ export async function PATCH(request, { params }) {
 
   const id = body?.id;
   if (!id) return Response.json({ error: "Falta el id" }, { status: 400 });
+
+  if (resource === "orders") {
+    const status = body?.status;
+    if (!["pending", "delivered", "cancelled"].includes(status)) {
+      return Response.json({ error: "Estado no válido" }, { status: 400 });
+    }
+    const { data: current } = await db
+      .from("orders")
+      .select("status")
+      .eq("id", id)
+      .maybeSingle();
+    if (!current) return Response.json({ error: "Pedido no encontrado" }, { status: 404 });
+    const { error } = await db.from("orders").update({ status }).eq("id", id);
+    if (error) return Response.json({ error: "No se pudo actualizar" }, { status: 400 });
+    // Si se cancela un pedido que estaba activo, devolver el stock
+    if (current.status !== "cancelled" && status === "cancelled") {
+      const { data: items } = await db
+        .from("order_items")
+        .select("product_id,quantity")
+        .eq("order_id", id);
+      for (const it of items || []) {
+        const { data: prod } = await db
+          .from("products")
+          .select("stock")
+          .eq("id", it.product_id)
+          .single();
+        if (prod) {
+          await db
+            .from("products")
+            .update({ stock: prod.stock + it.quantity })
+            .eq("id", it.product_id);
+        }
+      }
+    }
+    return Response.json({ ok: true });
+  }
 
   if (resource === "reviews") {
     if (typeof body?.approved !== "boolean") {
