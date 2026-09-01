@@ -1,7 +1,8 @@
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { requireAdmin, unauthorized } from "@/lib/auth";
-import { isValidDateStr, localToUtc } from "@/lib/availability";
-import { sanitizeHours } from "@/lib/hours";
+import { buildSlots, isValidDateStr, localToUtc } from "@/lib/availability";
+import { getBusinessHours, sanitizeHours } from "@/lib/hours";
+import { generateAccessCode, normalizePhone } from "@/lib/code";
 
 export const dynamic = "force-dynamic";
 
@@ -224,6 +225,114 @@ export async function POST(request, { params }) {
   const user = await requireAdmin(request);
   if (!user) return unauthorized();
   const { resource } = params;
+
+  if (resource === "appointments") {
+    // El personal apunta una cita a mano (cliente que llama o entra por la puerta)
+    let body;
+    try {
+      body = await request.json();
+    } catch {
+      return Response.json({ error: "Petición no válida" }, { status: 400 });
+    }
+    const { serviceId, employeeId, date, startsAt } = body || {};
+    const name = typeof body?.name === "string" ? body.name.trim().slice(0, 80) : "";
+    const phone = normalizePhone(body?.phone);
+
+    if (!serviceId || !employeeId || !isValidDateStr(date) || !startsAt) {
+      return Response.json({ error: "Faltan datos de la cita" }, { status: 400 });
+    }
+    if (name.length < 2) {
+      return Response.json({ error: "Escribe el nombre del cliente" }, { status: 400 });
+    }
+    if (phone.replace(/\D/g, "").length < 9) {
+      return Response.json({ error: "Escribe un teléfono válido" }, { status: 400 });
+    }
+
+    const db2 = supabaseAdmin();
+    const [{ data: service }, { data: employee }, generalHours] = await Promise.all([
+      db2.from("services").select("id,duration_min").eq("id", serviceId).eq("active", true).single(),
+      db2.from("employees").select("id,hours").eq("id", employeeId).eq("active", true).single(),
+      getBusinessHours(),
+    ]);
+    if (!service || !employee) {
+      return Response.json({ error: "Servicio o empleado no válido" }, { status: 400 });
+    }
+    const hours = sanitizeHours(employee.hours) ?? generalHours;
+
+    const dayStart = localToUtc(date, "00:00").toISOString();
+    const dayEnd = new Date(localToUtc(date, "00:00").getTime() + 86400000).toISOString();
+    const { data: busy } = await db2
+      .from("appointments")
+      .select("starts_at,ends_at")
+      .eq("employee_id", employeeId)
+      .eq("status", "confirmed")
+      .gte("ends_at", dayStart)
+      .lte("starts_at", dayEnd);
+
+    const slots = buildSlots(date, service.duration_min, busy || [], hours);
+    const slot = slots.find((s) => s.startsAt === startsAt && s.free);
+    if (!slot) {
+      return Response.json(
+        { error: "Ese hueco no está disponible. Elige otra hora." },
+        { status: 409 }
+      );
+    }
+
+    // Cliente: buscar por teléfono o crearlo (con código para "Mis citas")
+    let clientId;
+    let accessCode;
+    const { data: existing } = await db2
+      .from("clients")
+      .select("id,access_code")
+      .eq("phone", phone)
+      .maybeSingle();
+    if (existing) {
+      clientId = existing.id;
+      accessCode = existing.access_code;
+      if (!accessCode) {
+        accessCode = generateAccessCode();
+        await db2.from("clients").update({ access_code: accessCode }).eq("id", clientId);
+      }
+    } else {
+      let created = null;
+      for (let intento = 0; intento < 3 && !created; intento++) {
+        accessCode = generateAccessCode();
+        const { data } = await db2
+          .from("clients")
+          .insert({ name, phone, access_code: accessCode })
+          .select("id")
+          .single();
+        if (data) created = data;
+      }
+      if (!created) {
+        return Response.json({ error: "No se pudo guardar el cliente" }, { status: 500 });
+      }
+      clientId = created.id;
+    }
+
+    const { data: appt, error: aErr } = await db2
+      .from("appointments")
+      .insert({
+        employee_id: employeeId,
+        service_id: serviceId,
+        client_id: clientId,
+        starts_at: slot.startsAt,
+        ends_at: slot.endsAt,
+      })
+      .select("id,starts_at")
+      .single();
+    if (aErr) {
+      if (aErr.code === "23P01") {
+        return Response.json(
+          { error: "Ese hueco se acaba de ocupar. Elige otra hora." },
+          { status: 409 }
+        );
+      }
+      return Response.json({ error: "No se pudo crear la cita" }, { status: 500 });
+    }
+
+    return Response.json({ ok: true, appointmentId: appt.id, accessCode });
+  }
 
   if (resource === "gallery") {
     // Subida de foto: { imageBase64, contentType, caption }

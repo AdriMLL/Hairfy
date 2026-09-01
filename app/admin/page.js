@@ -157,6 +157,8 @@ function useList(api, path) {
 function Agenda({ api }) {
   const [date, setDate] = useState(todayStr());
   const { data, error, setError, reload } = useList(api, `appointments?date=${date}`);
+  const [showNew, setShowNew] = useState(false);
+  const [newDone, setNewDone] = useState("");
 
   async function setStatus(id, status) {
     try {
@@ -179,7 +181,25 @@ function Agenda({ api }) {
           <label htmlFor="agenda-date">Día</label>
           <input id="agenda-date" type="date" value={date} onChange={(e) => setDate(e.target.value)} />
         </div>
+        <div style={{ flex: "0 0 auto" }}>
+          <label style={{ visibility: "hidden" }}>.</label>
+          <button onClick={() => { setShowNew((s) => !s); setNewDone(""); }}>
+            {showNew ? "Cerrar" : "➕ Nueva cita"}
+          </button>
+        </div>
       </div>
+      {newDone && <p className="msg-ok">{newDone}</p>}
+      {showNew && (
+        <NewAppointment
+          api={api}
+          defaultDate={date}
+          onDone={(msg) => {
+            setShowNew(false);
+            setNewDone(msg);
+            reload();
+          }}
+        />
+      )}
       {error && <p className="msg-error">{error}</p>}
       {!data ? (
         <p>Cargando…</p>
@@ -305,6 +325,142 @@ function Services({ api }) {
         </table>
       )}
     </div>
+  );
+}
+
+// ---------- Nueva cita (creada por el personal) ----------
+
+function NewAppointment({ api, defaultDate, onDone }) {
+  const [services, setServices] = useState([]);
+  const [employees, setEmployees] = useState([]);
+  const [serviceId, setServiceId] = useState("");
+  const [employeeId, setEmployeeId] = useState("");
+  const [date, setDate] = useState(defaultDate || todayStr());
+  const [slots, setSlots] = useState(null);
+  const [startsAt, setStartsAt] = useState("");
+  const [name, setName] = useState("");
+  const [phone, setPhone] = useState("");
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    Promise.all([api("services"), api("employees")])
+      .then(([s, e]) => {
+        setServices((s.data || []).filter((x) => x.active));
+        const activos = (e.data || []).filter((x) => x.active);
+        setEmployees(activos);
+        if (activos.length === 1) setEmployeeId(activos[0].id);
+      })
+      .catch((e2) => setError(e2.message));
+  }, [api]);
+
+  useEffect(() => {
+    setStartsAt("");
+    setSlots(null);
+    if (!serviceId || !employeeId || !date) return;
+    const params = new URLSearchParams({ date, employeeId, serviceId });
+    fetch(`/api/availability?${params}`)
+      .then((r) => r.json())
+      .then((d) => setSlots(d.slots ?? []))
+      .catch(() => setError("No se pudo consultar la disponibilidad"));
+  }, [serviceId, employeeId, date]);
+
+  async function submit(e) {
+    e.preventDefault();
+    setError("");
+    setSaving(true);
+    try {
+      const res = await api("appointments", {
+        method: "POST",
+        body: JSON.stringify({ serviceId, employeeId, date, startsAt, name, phone }),
+      });
+      onDone(
+        `Cita apuntada para ${name}. Su código de cliente es ${res.accessCode} (díselo para que pueda ver o cancelar sus citas en la web).`
+      );
+    } catch (e2) {
+      setError(e2.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const freeSlots = (slots || []).filter((s) => s.free);
+
+  return (
+    <form onSubmit={submit} style={{ marginTop: 14, padding: 16, border: "1px dashed var(--gold-dark)", borderRadius: 12 }}>
+      <h3 style={{ margin: "0 0 6px" }}>Apuntar cita (cliente por teléfono o en tienda)</h3>
+      <div className="row">
+        <div>
+          <label>Nombre del cliente</label>
+          <input value={name} onChange={(e) => setName(e.target.value)} required minLength={2} placeholder="Juan Pérez" />
+        </div>
+        <div>
+          <label>Teléfono</label>
+          <input type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} required minLength={9} placeholder="600123456" />
+        </div>
+      </div>
+      <div className="row">
+        <div>
+          <label>Servicio</label>
+          <select value={serviceId} onChange={(e) => setServiceId(e.target.value)} required>
+            <option value="">— Elige —</option>
+            {services.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name} · {s.duration_min} min
+              </option>
+            ))}
+          </select>
+        </div>
+        {employees.length > 1 && (
+          <div>
+            <label>Profesional</label>
+            <select value={employeeId} onChange={(e) => setEmployeeId(e.target.value)} required>
+              <option value="">— Elige —</option>
+              {employees.map((emp) => (
+                <option key={emp.id} value={emp.id}>{emp.name}</option>
+              ))}
+            </select>
+          </div>
+        )}
+        <div>
+          <label>Día</label>
+          <input type="date" value={date} onChange={(e) => setDate(e.target.value)} required />
+        </div>
+      </div>
+      {slots && (
+        <>
+          <label>Hora</label>
+          {freeSlots.length === 0 ? (
+            <p style={{ color: "var(--muted)", margin: "4px 0" }}>
+              No quedan huecos libres ese día (o está cerrado).
+            </p>
+          ) : (
+            <div className="slots">
+              {slots.map((s) =>
+                s.free ? (
+                  <button
+                    type="button"
+                    key={s.startsAt}
+                    className={`slot ${startsAt === s.startsAt ? "selected" : ""}`}
+                    onClick={() => setStartsAt(s.startsAt)}
+                  >
+                    {s.time}
+                  </button>
+                ) : (
+                  <span key={s.startsAt} className="slot busy">{s.time}</span>
+                )
+              )}
+            </div>
+          )}
+        </>
+      )}
+      <div style={{ marginTop: 14 }}>
+        <button type="submit" disabled={saving || !startsAt}>
+          {saving ? "Guardando…" : "Apuntar cita"}
+        </button>
+      </div>
+      {error && <p className="msg-error">{error}</p>}
+    </form>
   );
 }
 
