@@ -14,6 +14,12 @@ const manrope = Manrope({
   weight: ["400", "500", "600", "700"],
 });
 
+export const viewport = {
+  width: "device-width",
+  initialScale: 1,
+  themeColor: "#0f0d0b",
+};
+
 export const metadata = {
   title: `${BUSINESS.name} — Barbería en ${BUSINESS.city} · Reserva tu cita online`,
   description: `${BUSINESS.fullName}: barbería en ${BUSINESS.address}. ${BUSINESS.googleRating}★ en Google. Reserva tu cita online en un minuto: corte, barba y más.`,
