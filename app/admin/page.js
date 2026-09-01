@@ -2083,6 +2083,7 @@ function Employees({ api }) {
 function Clients({ api }) {
   const { data, error, setError, reload } = useList(api, "clients");
   const [q, setQ] = useState("");
+  const [selectedId, setSelectedId] = useState(null);
 
   async function remove(c) {
     if (
@@ -2099,6 +2100,19 @@ function Clients({ api }) {
     }
   }
 
+  if (selectedId) {
+    return (
+      <ClientDetail
+        api={api}
+        clientId={selectedId}
+        onBack={() => {
+          setSelectedId(null);
+          reload();
+        }}
+      />
+    );
+  }
+
   const filtered = (data || []).filter(
     (c) =>
       c.name.toLowerCase().includes(q.toLowerCase()) || c.phone.includes(q)
@@ -2107,6 +2121,9 @@ function Clients({ api }) {
   return (
     <div className="card">
       <h2>Clientes</h2>
+      <p style={{ color: "var(--muted)", marginTop: 0, fontSize: "0.9rem" }}>
+        Toca un cliente para abrir su ficha completa: historial, gasto, no-shows y notas.
+      </p>
       <label htmlFor="client-search">Buscar</label>
       <input id="client-search" placeholder="Nombre o teléfono" value={q} onChange={(e) => setQ(e.target.value)} />
       {error && <p className="msg-error">{error}</p>}
@@ -2116,13 +2133,18 @@ function Clients({ api }) {
             <thead><tr><th>Nombre</th><th>Teléfono</th><th>Código</th><th>Cliente desde</th><th></th></tr></thead>
             <tbody>
               {filtered.map((c) => (
-                <tr key={c.id}>
-                  <td>{c.name}</td>
+                <tr key={c.id} className="row-click" onClick={() => setSelectedId(c.id)}>
+                  <td style={{ fontWeight: 600 }}>{c.name}</td>
                   <td>{c.phone}</td>
                   <td style={{ color: "var(--gold-strong)", fontWeight: 600 }}>{c.access_code || "—"}</td>
                   <td>{new Date(c.created_at).toLocaleDateString("es-ES")}</td>
-                  <td>
-                    <button className="danger small" onClick={() => remove(c)}>Borrar</button>
+                  <td style={{ whiteSpace: "nowrap" }}>
+                    <button className="secondary small" onClick={(e) => { e.stopPropagation(); setSelectedId(c.id); }}>
+                      Ver ficha
+                    </button>
+                    <button className="danger small" style={{ marginLeft: 6 }} onClick={(e) => { e.stopPropagation(); remove(c); }}>
+                      Borrar
+                    </button>
                   </td>
                 </tr>
               ))}
@@ -2131,5 +2153,207 @@ function Clients({ api }) {
         </div>
       )}
     </div>
+  );
+}
+
+// ---------- Ficha completa de un cliente ----------
+
+function ClientDetail({ api, clientId, onBack }) {
+  const [data, setData] = useState(null);
+  const [error, setError] = useState("");
+  const [notes, setNotes] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [ok, setOk] = useState("");
+
+  const load = useCallback(() => {
+    api(`client-detail?id=${clientId}`)
+      .then((d) => {
+        setData(d.data);
+        setNotes(d.data.client.notes || "");
+      })
+      .catch((e) => setError(e.message));
+  }, [api, clientId]);
+  useEffect(load, [load]);
+
+  async function saveNotes() {
+    setSaving(true);
+    setError("");
+    setOk("");
+    try {
+      await api("clients", {
+        method: "PATCH",
+        body: JSON.stringify({ id: clientId, notes }),
+      });
+      setOk("Notas guardadas.");
+    } catch (e2) {
+      setError(e2.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (!data) {
+    return (
+      <div className="card">
+        <button className="secondary small" onClick={onBack}>← Volver a clientes</button>
+        <p style={{ marginTop: 14 }}>{error ? "" : "Cargando ficha…"}</p>
+        {error && <p className="msg-error">{error}</p>}
+      </div>
+    );
+  }
+
+  const { client, appointments, orders, totals } = data;
+  const totalSpent = totals.serviceSpent + totals.productSpent;
+  const fmtDT = (iso) =>
+    new Date(iso).toLocaleString("es-ES", {
+      timeZone: "Europe/Madrid",
+      day: "numeric",
+      month: "short",
+      year: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  const statusBadge = (st) =>
+    st === "cancelled" ? (
+      <span className="badge cancelled">Cancelada</span>
+    ) : st === "no_show" ? (
+      <span className="badge noshow">No vino</span>
+    ) : (
+      <span className="badge">Confirmada</span>
+    );
+
+  return (
+    <>
+      <div className="card">
+        <div className="topbar" style={{ marginBottom: 10 }}>
+          <button className="secondary small" onClick={onBack}>← Volver a clientes</button>
+        </div>
+        <h2 style={{ marginBottom: 4 }}>{client.name}</h2>
+        <p style={{ color: "var(--muted)", margin: "0 0 14px", fontSize: "0.92rem" }}>
+          📞 <a href={`tel:${client.phone}`} style={{ color: "var(--gold-strong)" }}>{client.phone}</a>
+          {client.email && <> · ✉️ {client.email}</>}
+          {" · "}🔑 <span style={{ color: "var(--gold-strong)", fontWeight: 600 }}>{client.access_code || "—"}</span>
+          {" · "}Cliente desde {new Date(client.created_at).toLocaleDateString("es-ES")}
+          {client.marketing_consent_at && <> · 📣 Acepta promos</>}
+        </p>
+        <div className="stat-grid">
+          <div className="stat-box">
+            <div className="stat-num">{totals.visits}</div>
+            <div className="stat-label">visitas realizadas</div>
+          </div>
+          <div className="stat-box">
+            <div className="stat-num">{totals.upcoming}</div>
+            <div className="stat-label">citas próximas</div>
+          </div>
+          <div className="stat-box">
+            <div className="stat-num">{totalSpent.toFixed(0)} €</div>
+            <div className="stat-label">gasto total estimado</div>
+          </div>
+          <div className="stat-box">
+            <div className="stat-num">{totals.noShows}</div>
+            <div className="stat-label">no vino (no-show)</div>
+          </div>
+          <div className="stat-box">
+            <div className="stat-num">{totals.cancelled}</div>
+            <div className="stat-label">canceladas</div>
+          </div>
+        </div>
+        {totals.noShows >= 2 && (
+          <p className="msg-error" style={{ marginTop: 10 }}>
+            ⚠️ Este cliente ha faltado {totals.noShows} veces sin avisar.
+          </p>
+        )}
+      </div>
+
+      <div className="card" style={{ marginTop: 18 }}>
+        <h2>📝 Notas del barbero</h2>
+        <p style={{ color: "var(--muted)", marginTop: 0, fontSize: "0.88rem" }}>
+          Privadas: solo se ven aquí, nunca en la web del cliente. (Corte habitual, preferencias, avisos…)
+        </p>
+        <textarea
+          value={notes}
+          maxLength={2000}
+          rows={4}
+          placeholder="Ej.: degradado nº 2, arreglo de barba con navaja, prefiere por la tarde…"
+          onChange={(e) => { setNotes(e.target.value); setOk(""); }}
+          style={{ width: "100%", resize: "vertical" }}
+        />
+        <div style={{ marginTop: 10 }}>
+          <button onClick={saveNotes} disabled={saving}>
+            {saving ? "Guardando…" : "Guardar notas"}
+          </button>
+        </div>
+        {ok && <p className="msg-ok">{ok}</p>}
+        {error && <p className="msg-error">{error}</p>}
+      </div>
+
+      <div className="card" style={{ marginTop: 18 }}>
+        <h2>Historial de citas ({appointments.length})</h2>
+        {appointments.length === 0 ? (
+          <p style={{ color: "var(--muted)" }}>Todavía no tiene citas.</p>
+        ) : (
+          <div className="table-scroll">
+            <table>
+              <thead>
+                <tr><th>Fecha</th><th>Servicio</th><th>Profesional</th><th>Precio</th><th>Estado</th></tr>
+              </thead>
+              <tbody>
+                {appointments.map((a) => (
+                  <tr key={a.id} style={a.status !== "confirmed" ? { opacity: 0.6 } : undefined}>
+                    <td>{fmtDT(a.starts_at)}</td>
+                    <td>
+                      {a.services?.name}
+                      {(a.appointment_products || []).length > 0 && (
+                        <span style={{ color: "var(--muted)" }}>
+                          {" "}· 🧴 {(a.appointment_products || []).map((p2) => `${p2.products?.name} x${p2.quantity}`).join(", ")}
+                        </span>
+                      )}
+                    </td>
+                    <td>{a.employees?.name}</td>
+                    <td>{Number(a.services?.price_eur || 0).toFixed(2)} €</td>
+                    <td>{statusBadge(a.status)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      <div className="card" style={{ marginTop: 18 }}>
+        <h2>Pedidos ({orders.length})</h2>
+        {orders.length === 0 ? (
+          <p style={{ color: "var(--muted)" }}>Todavía no tiene pedidos.</p>
+        ) : (
+          <div className="table-scroll">
+            <table>
+              <thead>
+                <tr><th>Fecha</th><th>Artículos</th><th>Total</th><th>Estado</th></tr>
+              </thead>
+              <tbody>
+                {orders.map((o) => {
+                  const total = (o.order_items || []).reduce(
+                    (acc, it) => acc + it.quantity * Number(it.price_eur || 0),
+                    0
+                  );
+                  return (
+                    <tr key={o.id} style={o.status === "cancelled" ? { opacity: 0.6 } : undefined}>
+                      <td>{fmtDT(o.created_at)}</td>
+                      <td>{(o.order_items || []).map((it) => `${it.products?.name} x${it.quantity}`).join(", ")}</td>
+                      <td>{total.toFixed(2)} €</td>
+                      <td>
+                        <span className={`badge ${o.status === "cancelled" ? "cancelled" : ""}`}>
+                          {o.status === "pending" ? "Pendiente" : o.status === "delivered" ? "Entregado" : "Cancelado"}
+                        </span>
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </>
   );
 }

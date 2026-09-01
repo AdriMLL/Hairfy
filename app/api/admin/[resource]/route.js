@@ -27,7 +27,7 @@ const RESOURCES = {
   clients: {
     select: "id,name,phone,email,access_code,created_at",
     insertFields: [],
-    updateFields: ["name", "phone", "email"],
+    updateFields: ["name", "phone", "email", "notes"],
   },
   products: {
     select: "id,name,description,price_eur,stock,active,image_url,image_path,created_at",
@@ -129,6 +129,71 @@ export async function GET(request, { params }) {
       .limit(2000);
     if (error) return Response.json({ error: "Error al cargar citas" }, { status: 500 });
     return Response.json({ data });
+  }
+
+  if (resource === "client-detail") {
+    // Ficha completa de un cliente: datos, historial, pedidos y totales
+    const { searchParams } = new URL(request.url);
+    const id = searchParams.get("id");
+    if (!id) return Response.json({ error: "Falta el cliente" }, { status: 400 });
+    const { data: client } = await db
+      .from("clients")
+      .select("id,name,phone,email,access_code,notes,created_at,accepted_terms_at,marketing_consent_at")
+      .eq("id", id)
+      .maybeSingle();
+    if (!client) return Response.json({ error: "Cliente no encontrado" }, { status: 404 });
+
+    const [apptsRes, ordersRes] = await Promise.all([
+      db
+        .from("appointments")
+        .select("id,starts_at,status,services(name,price_eur),employees(name),appointment_products(quantity,products(name,price_eur))")
+        .eq("client_id", id)
+        .order("starts_at", { ascending: false })
+        .limit(200),
+      db
+        .from("orders")
+        .select("id,status,created_at,order_items(quantity,price_eur,products(name))")
+        .eq("client_id", id)
+        .order("created_at", { ascending: false })
+        .limit(100),
+    ]);
+
+    const appts = apptsRes.data || [];
+    const orders = ordersRes.data || [];
+    const now = Date.now();
+    let serviceSpent = 0;
+    let productSpent = 0;
+    let visits = 0;
+    let upcoming = 0;
+    let noShows = 0;
+    let cancelled = 0;
+    for (const a of appts) {
+      if (a.status === "no_show") noShows += 1;
+      else if (a.status === "cancelled") cancelled += 1;
+      else if (new Date(a.starts_at).getTime() > now) upcoming += 1;
+      else {
+        visits += 1;
+        serviceSpent += Number(a.services?.price_eur || 0);
+        for (const pItem of a.appointment_products || []) {
+          productSpent += pItem.quantity * Number(pItem.products?.price_eur || 0);
+        }
+      }
+    }
+    for (const o of orders) {
+      if (o.status === "cancelled") continue;
+      for (const it of o.order_items || []) {
+        productSpent += it.quantity * Number(it.price_eur || 0);
+      }
+    }
+
+    return Response.json({
+      data: {
+        client,
+        appointments: appts,
+        orders,
+        totals: { visits, upcoming, noShows, cancelled, serviceSpent, productSpent },
+      },
+    });
   }
 
   if (resource === "closures") {
@@ -844,6 +909,9 @@ export async function PATCH(request, { params }) {
   const cfg = RESOURCES[resource];
   if (!cfg) return Response.json({ error: "Recurso desconocido" }, { status: 404 });
   const values = pick(body, cfg.updateFields);
+  if (values.notes !== undefined) {
+    values.notes = typeof values.notes === "string" ? values.notes.trim().slice(0, 2000) || null : null;
+  }
   if (Object.keys(values).length === 0) {
     return Response.json({ error: "Nada que actualizar" }, { status: 400 });
   }

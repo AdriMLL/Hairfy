@@ -1078,3 +1078,7 @@ th { color: var(--muted); font-weight: 600; text-transform: uppercase; font-size
   background: var(--danger-bg);
   color: var(--danger);
 }
+
+/* ---- v18: ficha de cliente ---- */
+.row-click { cursor: pointer; }
+.row-click:hover td { background: rgba(207, 169, 99, 0.06); }
