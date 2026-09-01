@@ -79,6 +79,39 @@ function Login() {
 
 // ---------- Panel ----------
 
+const NAV = [
+  {
+    group: "Día a día",
+    items: [
+      ["agenda", "📅", "Agenda"],
+      ["orders", "🛍️", "Pedidos"],
+    ],
+  },
+  {
+    group: "Negocio",
+    items: [
+      ["stats", "📈", "Estadísticas"],
+      ["clients", "👥", "Clientes"],
+      ["reviews", "⭐", "Reseñas"],
+    ],
+  },
+  {
+    group: "Catálogo",
+    items: [
+      ["services", "✂️", "Servicios"],
+      ["products", "🧴", "Productos"],
+      ["gallery", "🖼️", "Galería"],
+    ],
+  },
+  {
+    group: "Configuración",
+    items: [
+      ["employees", "💈", "Empleados"],
+      ["horario", "🕘", "Horario"],
+    ],
+  },
+];
+
 function Dashboard({ session }) {
   const [tab, setTab] = useState("agenda");
 
@@ -99,6 +132,27 @@ function Dashboard({ session }) {
     [session]
   );
 
+  // Avisos de cosas pendientes (pedidos por entregar, reseñas por aprobar)
+  const [pending, setPending] = useState({ orders: 0, reviews: 0 });
+  useEffect(() => {
+    let alive = true;
+    Promise.all([api("orders"), api("reviews")])
+      .then(([o, r]) => {
+        if (!alive) return;
+        setPending({
+          orders: (o.data || []).filter((x) => x.status === "pending").length,
+          reviews: (r.data || []).filter((x) => !x.approved).length,
+        });
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, [api, tab]);
+
+  const badge = (key) =>
+    key === "orders" ? pending.orders : key === "reviews" ? pending.reviews : 0;
+
   return (
     <>
       <AdminHeader>
@@ -106,35 +160,57 @@ function Dashboard({ session }) {
           Cerrar sesión
         </button>
       </AdminHeader>
-      <main className="container" style={{ maxWidth: 960 }}>
-        <div className="tabs">
-          {[
-            ["agenda", "Agenda"],
-            ["orders", "Pedidos"],
-            ["stats", "Estadísticas"],
-            ["services", "Servicios"],
-            ["products", "Productos"],
-            ["employees", "Empleados"],
-            ["clients", "Clientes"],
-            ["gallery", "Galería"],
-            ["reviews", "Reseñas"],
-            ["horario", "Horario"],
-          ].map(([key, label]) => (
-            <button key={key} className={tab === key ? "active" : ""} onClick={() => setTab(key)}>
-              {label}
-            </button>
+      <main className="container admin-main">
+        {/* Menú móvil: un desplegable en vez del lateral */}
+        <select
+          className="admin-select"
+          value={tab}
+          onChange={(e) => setTab(e.target.value)}
+          aria-label="Sección del panel"
+        >
+          {NAV.map((g) => (
+            <optgroup key={g.group} label={g.group}>
+              {g.items.map(([key, icon, label]) => (
+                <option key={key} value={key}>
+                  {icon} {label}
+                  {badge(key) > 0 ? ` (${badge(key)})` : ""}
+                </option>
+              ))}
+            </optgroup>
           ))}
+        </select>
+
+        <div className="admin-layout">
+          <aside className="admin-side">
+            {NAV.map((g) => (
+              <div key={g.group}>
+                <div className="admin-nav-title">{g.group}</div>
+                {g.items.map(([key, icon, label]) => (
+                  <button
+                    key={key}
+                    className={`admin-nav-item ${tab === key ? "active" : ""}`}
+                    onClick={() => setTab(key)}
+                  >
+                    <span aria-hidden="true">{icon}</span> {label}
+                    {badge(key) > 0 && <span className="nav-badge">{badge(key)}</span>}
+                  </button>
+                ))}
+              </div>
+            ))}
+          </aside>
+          <div className="admin-content">
+            {tab === "agenda" && <Agenda api={api} />}
+            {tab === "orders" && <Orders api={api} />}
+            {tab === "stats" && <Stats api={api} />}
+            {tab === "services" && <Services api={api} />}
+            {tab === "products" && <Products api={api} />}
+            {tab === "employees" && <Employees api={api} />}
+            {tab === "clients" && <Clients api={api} />}
+            {tab === "gallery" && <Gallery api={api} />}
+            {tab === "reviews" && <Reviews api={api} />}
+            {tab === "horario" && <Horario api={api} />}
+          </div>
         </div>
-        {tab === "agenda" && <Agenda api={api} />}
-        {tab === "orders" && <Orders api={api} />}
-        {tab === "stats" && <Stats api={api} />}
-        {tab === "services" && <Services api={api} />}
-        {tab === "products" && <Products api={api} />}
-        {tab === "employees" && <Employees api={api} />}
-        {tab === "clients" && <Clients api={api} />}
-        {tab === "gallery" && <Gallery api={api} />}
-        {tab === "reviews" && <Reviews api={api} />}
-        {tab === "horario" && <Horario api={api} />}
       </main>
     </>
   );
