@@ -2,6 +2,9 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { SiteHeader, SiteFooter } from "@/components/SiteHeader";
+import { Shop } from "@/components/Shop";
+import { ClientAuth } from "@/components/ClientAuth";
+import { loadSession, saveSession, clearSession } from "@/lib/session";
 
 export default function BookingPage() {
   const [meta, setMeta] = useState(null);
@@ -33,12 +36,34 @@ export default function BookingPage() {
   const stepDay = singleEmployee ? 2 : 3;
   const stepData = stepDay + 1;
 
-  // Si viene desde "Mis citas", rellenamos sus datos automáticamente
+  // Sesión del cliente en este navegador (evita reescribir datos y duplicados)
+  const [session, setSession] = useState(null);
   useEffect(() => {
+    const s = loadSession();
+    if (s) {
+      setSession(s);
+      setName(s.name);
+      setPhone(s.phone);
+      return;
+    }
+    // Si viene desde "Mis citas", rellenamos sus datos automáticamente
     const params = new URLSearchParams(window.location.search);
     if (params.get("name")) setName(params.get("name"));
     if (params.get("phone")) setPhone(params.get("phone"));
   }, []);
+
+  function onAuth(s) {
+    setSession(s);
+    setName(s.name);
+    setPhone(s.phone);
+  }
+
+  function logout() {
+    clearSession();
+    setSession(null);
+    setName("");
+    setPhone("");
+  }
 
   const { minDate, maxDate } = useMemo(() => {
     const fmt = (d) => d.toISOString().slice(0, 10);
@@ -93,6 +118,11 @@ export default function BookingPage() {
           setSlot(null);
         }
       } else {
+        // Guardamos la sesión: la próxima vez no tendrá que escribir nada
+        if (data.accessCode) {
+          saveSession({ name, phone, code: data.accessCode });
+          setSession({ name, phone, code: data.accessCode });
+        }
         setDone({
           startsAt: data.startsAt,
           accessCode: data.accessCode,
@@ -167,8 +197,19 @@ export default function BookingPage() {
             {meta.business.googleReviewCount} reseñas
           </a>
         )}
+        <div style={{ display: "flex", gap: 10, justifyContent: "center", flexWrap: "wrap", marginTop: 18 }}>
+          <a href="#reservar"><button>📅 Reservar cita</button></a>
+          <a href="#pedidos"><button className="secondary">🛍️ Pedidos</button></a>
+          <a href="#nosotros"><button className="secondary">✂️ Nosotros</button></a>
+        </div>
+        {session && (
+          <p style={{ color: "var(--muted)", marginTop: 14, fontSize: "0.9rem" }}>
+            Hola de nuevo, <strong style={{ color: "var(--gold-strong)" }}>{session.name}</strong> 👋
+          </p>
+        )}
       </div>
       <main className="container">
+        <section id="reservar">
         <form className="card" onSubmit={submit}>
           <div className="step-title">
             <span className="step-num">1</span>
@@ -278,29 +319,46 @@ export default function BookingPage() {
                 <span className="step-num">{stepData}</span>
                 <h2 style={{ margin: 0 }}>Tus datos</h2>
               </div>
-              <label htmlFor="name">Nombre</label>
-              <input
-                id="name"
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                required
-                minLength={2}
-                maxLength={80}
-                autoComplete="name"
-                placeholder="María García"
-              />
-              <label htmlFor="phone">Teléfono</label>
-              <input
-                id="phone"
-                type="tel"
-                value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-                required
-                minLength={9}
-                maxLength={20}
-                autoComplete="tel"
-                placeholder="600 123 456"
-              />
+              {session ? (
+                <p style={{ margin: "4px 0 0" }}>
+                  Reservando como{" "}
+                  <strong style={{ color: "var(--gold-strong)" }}>{session.name}</strong>{" "}
+                  ({session.phone}){" "}
+                  <button type="button" className="secondary small" style={{ marginLeft: 8 }} onClick={logout}>
+                    No soy yo
+                  </button>
+                </p>
+              ) : (
+                <>
+                  <label htmlFor="name">Nombre</label>
+                  <input
+                    id="name"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    required
+                    minLength={2}
+                    maxLength={80}
+                    autoComplete="name"
+                    placeholder="María García"
+                  />
+                  <label htmlFor="phone">Teléfono</label>
+                  <input
+                    id="phone"
+                    type="tel"
+                    value={phone}
+                    onChange={(e) => setPhone(e.target.value)}
+                    required
+                    minLength={9}
+                    maxLength={20}
+                    autoComplete="tel"
+                    placeholder="600 123 456"
+                  />
+                  <p style={{ color: "var(--muted)", fontSize: "0.82rem" }}>
+                    Si ya has reservado antes, usa el mismo teléfono: te reconocemos
+                    por él y no se duplica tu ficha.
+                  </p>
+                </>
+              )}
               <div className="summary">
                 <strong>{service.name}</strong> con <strong>{employee.name}</strong> ·{" "}
                 {new Date(slot.startsAt).toLocaleString("es-ES", {
@@ -324,8 +382,34 @@ export default function BookingPage() {
 
           {error && <p className="msg-error">{error}</p>}
         </form>
+        </section>
 
-        {meta?.business && <LandingSections meta={meta} />}
+        <section id="pedidos" className="landing-section">
+          <h2 className="section-title">🛍️ Pedidos de productos</h2>
+          <div className="card" style={{ marginTop: 0 }}>
+            {session ? (
+              <>
+                <p style={{ marginTop: 0, color: "var(--muted)" }}>
+                  Pide tus productos y recógelos en la peluquería (se pagan allí).
+                  Puedes ver tus pedidos en{" "}
+                  <a href="/mis-citas" style={{ color: "var(--gold-strong)" }}>Mis citas</a>.
+                </p>
+                <Shop phone={session.phone} code={session.code} />
+              </>
+            ) : (
+              <ClientAuth
+                onAuth={onAuth}
+                intro="Para hacer pedidos, identifícate: así quedan guardados a tu nombre y los recoges sin esperas."
+              />
+            )}
+          </div>
+        </section>
+
+        {meta?.business && (
+          <section id="nosotros">
+            <LandingSections meta={meta} />
+          </section>
+        )}
       </main>
       <SiteFooter />
     </>

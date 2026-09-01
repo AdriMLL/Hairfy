@@ -1,7 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { SiteHeader, SiteFooter } from "@/components/SiteHeader";
+import { Shop } from "@/components/Shop";
+import { loadSession, saveSession, clearSession } from "@/lib/session";
 
 function fmtWhen(iso) {
   return new Date(iso).toLocaleString("es-ES", {
@@ -22,8 +24,7 @@ export default function MisCitasPage() {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
-  async function lookup(e) {
-    e?.preventDefault();
+  const lookupWith = useCallback(async (p, c) => {
     setError("");
     setNotice("");
     setLoading(true);
@@ -31,80 +32,40 @@ export default function MisCitasPage() {
       const res = await fetch("/api/my-appointments", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ phone, code }),
+        body: JSON.stringify({ phone: p, code: c }),
       });
       const data = await res.json();
       if (!res.ok) setError(data.error || "No se pudo consultar");
-      else setResult(data);
-    } catch {
-      setError("Error de conexión. Inténtalo de nuevo.");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  const [reviewFor, setReviewFor] = useState(null); // id de cita a valorar
-  const [rating, setRating] = useState(0);
-  const [comment, setComment] = useState("");
-
-  // --- Pedidos de productos ---
-  const [products, setProducts] = useState([]);
-  const [showShop, setShowShop] = useState(false);
-  const [cart, setCart] = useState({}); // { productId: cantidad }
-
-  useEffect(() => {
-    fetch("/api/meta")
-      .then((r) => r.json())
-      .then((m) => setProducts(m.products || []))
-      .catch(() => {});
-  }, []);
-
-  function changeQty(product, delta) {
-    setCart((c) => {
-      const current = c[product.id] ?? 0;
-      const next = Math.max(0, Math.min(Math.min(5, product.stock), current + delta));
-      const copy = { ...c };
-      if (next === 0) delete copy[product.id];
-      else copy[product.id] = next;
-      return copy;
-    });
-  }
-
-  const cartItems = products
-    .filter((p) => cart[p.id])
-    .map((p) => ({ ...p, qty: cart[p.id] }));
-  const cartTotal = cartItems.reduce((acc, it) => acc + Number(it.price_eur) * it.qty, 0);
-
-  async function sendOrder() {
-    setError("");
-    setNotice("");
-    setLoading(true);
-    try {
-      const res = await fetch("/api/orders", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          phone,
-          code,
-          items: cartItems.map((it) => ({ productId: it.id, quantity: it.qty })),
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) setError(data.error || "No se pudo crear el pedido");
       else {
-        setNotice("¡Pedido realizado! Recógelo y págalo en la peluquería.");
-        setCart({});
-        setShowShop(false);
-        const m = await fetch("/api/meta").then((r) => r.json());
-        setProducts(m.products || []);
-        await lookup();
+        setResult(data);
+        saveSession({ name: data.name, phone: p, code: c });
       }
     } catch {
       setError("Error de conexión. Inténtalo de nuevo.");
     } finally {
       setLoading(false);
     }
+  }, []);
+
+  async function lookup(e) {
+    e?.preventDefault();
+    await lookupWith(phone, code);
   }
+
+  // Si ya se identificó antes en este navegador, entramos directamente
+  useEffect(() => {
+    const s = loadSession();
+    if (s) {
+      setPhone(s.phone);
+      setCode(s.code);
+      lookupWith(s.phone, s.code);
+    }
+  }, [lookupWith]);
+
+  const [reviewFor, setReviewFor] = useState(null); // id de cita a valorar
+  const [rating, setRating] = useState(0);
+  const [comment, setComment] = useState("");
+  const [showShop, setShowShop] = useState(false);
 
   async function cancelOrder(orderId) {
     if (!window.confirm("¿Cancelar este pedido?")) return;
@@ -233,7 +194,10 @@ export default function MisCitasPage() {
               <button
                 className="secondary small"
                 onClick={() => {
+                  clearSession();
                   setResult(null);
+                  setPhone("");
+                  setCode("");
                   setNotice("");
                   setError("");
                   setShowShop(false);
@@ -247,11 +211,9 @@ export default function MisCitasPage() {
               <a href={`/?name=${encodeURIComponent(result.name)}&phone=${encodeURIComponent(phone)}`}>
                 <button>📅 Pedir cita</button>
               </a>
-              {products.length > 0 && (
-                <button className="secondary" onClick={() => setShowShop((s) => !s)}>
-                  🛍️ {showShop ? "Cerrar tienda" : "Hacer pedido"}
-                </button>
-              )}
+              <button className="secondary" onClick={() => setShowShop((s) => !s)}>
+                🛍️ {showShop ? "Cerrar tienda" : "Hacer pedido"}
+              </button>
             </div>
 
             {notice && <p className="msg-ok">{notice}</p>}
@@ -260,51 +222,7 @@ export default function MisCitasPage() {
             {showShop && (
               <div style={{ marginTop: 18 }}>
                 <h3 style={{ margin: "0 0 10px" }}>Nuestros productos</h3>
-                <div className="option-grid">
-                  {products.map((p) => {
-                    const qty = cart[p.id] ?? 0;
-                    return (
-                      <div key={p.id} className={`option-card ${qty > 0 ? "selected" : ""}`}>
-                        <span className="name">{p.name}</span>
-                        {p.description && <span className="meta">{p.description}</span>}
-                        <span className="meta">
-                          <span className="price">{Number(p.price_eur).toFixed(2)} €</span>
-                          {p.stock <= 3 && (
-                            <span style={{ color: "var(--danger)" }}> · ¡quedan {p.stock}!</span>
-                          )}
-                        </span>
-                        <div className="qty-row">
-                          <button type="button" className="qty-btn" onClick={() => changeQty(p, -1)} disabled={qty === 0}>
-                            −
-                          </button>
-                          <span className="qty-num">{qty}</span>
-                          <button
-                            type="button"
-                            className="qty-btn"
-                            onClick={() => changeQty(p, 1)}
-                            disabled={qty >= Math.min(5, p.stock)}
-                          >
-                            +
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-                {cartItems.length > 0 && (
-                  <>
-                    <div className="summary">
-                      {cartItems.map((it) => `${it.name} x${it.qty}`).join(" · ")}
-                      <br />
-                      Total: <strong>{cartTotal.toFixed(2)} €</strong> · se paga al recoger
-                    </div>
-                    <div style={{ marginTop: 12 }}>
-                      <button onClick={sendOrder} disabled={loading}>
-                        {loading ? "Enviando…" : "Confirmar pedido 🛍️"}
-                      </button>
-                    </div>
-                  </>
-                )}
+                <Shop phone={phone} code={code} onOrdered={() => lookupWith(phone, code)} />
               </div>
             )}
 

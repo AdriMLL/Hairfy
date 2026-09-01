@@ -17,7 +17,9 @@
 
 * { box-sizing: border-box; }
 
-html { color-scheme: dark; }
+html { color-scheme: dark; scroll-behavior: smooth; }
+
+section[id] { scroll-margin-top: 84px; }
 
 body {
   margin: 0;
@@ -354,7 +356,7 @@ th { color: var(--muted); font-weight: 600; text-transform: uppercase; font-size
   border-color: transparent;
 }
 
-.row { display: flex; gap: 12px; flex-wrap: wrap; align-items: end; }
+.row { display: flex; gap: 12px; flex-wrap: wrap; align-items: flex-end; }
 .row > div { flex: 1; min-width: 140px; }
 
 .topbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; }
