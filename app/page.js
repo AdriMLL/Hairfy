@@ -59,11 +59,12 @@ function PedidosTab() {
 
 export default function HomePage() {
   const [meta, setMeta] = useState(null);
-  const [tab, setTab] = useState("reservar"); // reservar | pedidos
+  const [tab, setTab] = useState("reservar"); // reservar | pedidos | nosotros
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    if (params.get("tab") === "pedidos") setTab("pedidos");
+    const t = params.get("tab");
+    if (["reservar", "pedidos", "nosotros"].includes(t)) setTab(t);
     fetch("/api/meta")
       .then((r) => r.json())
       .then(setMeta)
@@ -112,11 +113,24 @@ export default function HomePage() {
           >
             🛍️ Pedidos
           </button>
+          <button
+            role="tab"
+            aria-selected={tab === "nosotros"}
+            className={`home-tab ${tab === "nosotros" ? "active" : ""}`}
+            onClick={() => setTab("nosotros")}
+          >
+            💈 Nosotros
+          </button>
         </div>
 
-        {tab === "reservar" ? <BookingFlow meta={meta} /> : <PedidosTab />}
-
-        {meta?.business && <LandingSections meta={meta} />}
+        {tab === "reservar" && <BookingFlow meta={meta} />}
+        {tab === "pedidos" && <PedidosTab />}
+        {tab === "nosotros" &&
+          (meta?.business ? (
+            <LandingSections meta={meta} />
+          ) : (
+            <div className="card"><p style={{ color: "var(--muted)" }}>Cargando…</p></div>
+          ))}
       </main>
       <SiteFooter />
     </>

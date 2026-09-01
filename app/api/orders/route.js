@@ -1,22 +1,30 @@
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { normalizeCode, normalizePhone } from "@/lib/code";
+import { isBlocked, recordFail, clearFails, clientKey } from "@/lib/rateLimit";
+import { logActivity } from "@/lib/audit";
 
 export const dynamic = "force-dynamic";
 
 // Pedidos de productos (independientes de las citas).
 // El cliente se autentica con teléfono + código, igual que en "Mis citas".
 
-async function authClient(body) {
+async function authClient(request, body) {
   const phone = normalizePhone(body?.phone);
   const code = normalizeCode(body?.code);
   if (!phone || phone.replace(/\D/g, "").length < 9 || !code) return null;
+  const key = clientKey(request, phone);
+  if (isBlocked(key)) return "blocked";
   const db = supabaseAdmin();
   const { data: client } = await db
     .from("clients")
     .select("id,name,access_code")
     .eq("phone", phone)
     .maybeSingle();
-  if (!client || !client.access_code || client.access_code !== code) return null;
+  if (!client || !client.access_code || client.access_code !== code) {
+    recordFail(key);
+    return null;
+  }
+  clearFails(key);
   return client;
 }
 
@@ -58,7 +66,13 @@ export async function POST(request) {
   } catch {
     return Response.json({ error: "Petición no válida" }, { status: 400 });
   }
-  const client = await authClient(body);
+  const client = await authClient(request, body);
+  if (client === "blocked") {
+    return Response.json(
+      { error: "Demasiados intentos. Espera unos minutos y vuelve a probar." },
+      { status: 429 }
+    );
+  }
   if (!client) {
     return Response.json({ error: "Teléfono o código incorrectos" }, { status: 401 });
   }
@@ -117,6 +131,12 @@ export async function POST(request) {
     return Response.json({ error: "No se pudo guardar el pedido" }, { status: 500 });
   }
 
+  await logActivity("cliente", "pedido_creado", {
+    cliente: client.name,
+    articulos: rows.reduce((acc, r) => acc + r.quantity, 0),
+    total: rows.reduce((acc, r) => acc + Number(r.price_eur) * r.quantity, 0),
+  });
+
   return Response.json({ ok: true, orderId: order.id });
 }
 
@@ -128,7 +148,13 @@ export async function PATCH(request) {
   } catch {
     return Response.json({ error: "Petición no válida" }, { status: 400 });
   }
-  const client = await authClient(body);
+  const client = await authClient(request, body);
+  if (client === "blocked") {
+    return Response.json(
+      { error: "Demasiados intentos. Espera unos minutos y vuelve a probar." },
+      { status: 429 }
+    );
+  }
   if (!client) {
     return Response.json({ error: "Teléfono o código incorrectos" }, { status: 401 });
   }
@@ -159,6 +185,8 @@ export async function PATCH(request) {
     db,
     (items || []).map((it) => ({ productId: it.product_id, quantity: it.quantity }))
   );
+
+  await logActivity("cliente", "pedido_cancelado", { cliente: client.name, via: "web" });
 
   return Response.json({ ok: true });
 }

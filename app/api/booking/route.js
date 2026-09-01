@@ -1,7 +1,9 @@
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { buildSlots, isValidDateStr, isBookableDate, localToUtc } from "@/lib/availability";
 import { getBusinessHours, sanitizeHours } from "@/lib/hours";
-import { generateAccessCode, normalizePhone } from "@/lib/code";
+import { generateAccessCode, normalizeCode, normalizePhone } from "@/lib/code";
+import { isBlocked, recordFail, clearFails, clientKey, tooManyResponse } from "@/lib/rateLimit";
+import { logActivity } from "@/lib/audit";
 
 export const dynamic = "force-dynamic";
 
@@ -98,7 +100,10 @@ export async function POST(request) {
     );
   }
 
-  // Cliente: buscar por teléfono o crearlo (con su código de acceso)
+  // Cliente: buscar por teléfono o crearlo (con su código de acceso).
+  // SEGURIDAD: si la ficha ya existe, hay que demostrar que es tuya con el
+  // código — si no, cualquiera que supiera un teléfono podría suplantar al
+  // cliente u obtener su código.
   let clientId;
   let accessCode;
   const { data: existing } = await db
@@ -107,14 +112,22 @@ export async function POST(request) {
     .eq("phone", phone)
     .maybeSingle();
   if (existing) {
+    const key = clientKey(request, phone);
+    if (isBlocked(key)) return tooManyResponse();
+    const givenCode = normalizeCode(body?.code);
+    if (!existing.access_code || existing.access_code !== givenCode) {
+      recordFail(key);
+      return Response.json(
+        {
+          error:
+            "Este teléfono ya tiene ficha. Identifícate con tu código para reservar (si lo has perdido, llámanos).",
+        },
+        { status: 401 }
+      );
+    }
+    clearFails(key);
     clientId = existing.id;
     accessCode = existing.access_code;
-    const updates = { name };
-    if (!accessCode) {
-      accessCode = generateAccessCode();
-      updates.access_code = accessCode;
-    }
-    await db.from("clients").update(updates).eq("id", clientId);
   } else {
     let created = null;
     for (let intento = 0; intento < 3 && !created; intento++) {
@@ -200,6 +213,13 @@ export async function POST(request) {
       productNames.length = 0;
     }
   }
+
+  await logActivity("cliente", "cita_creada", {
+    cliente: name,
+    telefono: phone,
+    fecha: appt.starts_at,
+    via: "web",
+  });
 
   return Response.json({
     ok: true,

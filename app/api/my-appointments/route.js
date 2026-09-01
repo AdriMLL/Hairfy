@@ -1,23 +1,31 @@
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { normalizeCode, normalizePhone } from "@/lib/code";
 import { BUSINESS } from "@/lib/config";
+import { isBlocked, recordFail, clearFails, clientKey } from "@/lib/rateLimit";
+import { logActivity } from "@/lib/audit";
 
 export const dynamic = "force-dynamic";
 
 // Área de cliente: consulta y cancelación de citas con teléfono + código.
-// La verificación ocurre siempre en el servidor.
+// La verificación ocurre siempre en el servidor, con límite de intentos.
 
-async function authClient(body) {
+async function authClient(request, body) {
   const phone = normalizePhone(body?.phone);
   const code = normalizeCode(body?.code);
   if (!phone || phone.replace(/\D/g, "").length < 9 || !code) return null;
+  const key = clientKey(request, phone);
+  if (isBlocked(key)) return "blocked";
   const db = supabaseAdmin();
   const { data: client } = await db
     .from("clients")
     .select("id,name,access_code")
     .eq("phone", phone)
     .maybeSingle();
-  if (!client || !client.access_code || client.access_code !== code) return null;
+  if (!client || !client.access_code || client.access_code !== code) {
+    recordFail(key);
+    return null;
+  }
+  clearFails(key);
   return client;
 }
 
@@ -31,7 +39,13 @@ export async function POST(request) {
   } catch {
     return Response.json({ error: "Petición no válida" }, { status: 400 });
   }
-  const client = await authClient(body);
+  const client = await authClient(request, body);
+  if (client === "blocked") {
+    return Response.json(
+      { error: "Demasiados intentos. Espera unos minutos y vuelve a probar." },
+      { status: 429 }
+    );
+  }
   if (!client) return Response.json(AUTH_ERROR, { status: 401 });
 
   const db = supabaseAdmin();
@@ -105,7 +119,13 @@ export async function PATCH(request) {
   } catch {
     return Response.json({ error: "Petición no válida" }, { status: 400 });
   }
-  const client = await authClient(body);
+  const client = await authClient(request, body);
+  if (client === "blocked") {
+    return Response.json(
+      { error: "Demasiados intentos. Espera unos minutos y vuelve a probar." },
+      { status: 429 }
+    );
+  }
   if (!client) return Response.json(AUTH_ERROR, { status: 401 });
 
   const id = body?.appointmentId;
@@ -159,6 +179,12 @@ export async function PATCH(request) {
         .eq("id", it.product_id);
     }
   }
+
+  await logActivity("cliente", "cita_cancelada", {
+    cliente: client.name,
+    fecha: appt.starts_at,
+    via: "web",
+  });
 
   return Response.json({ ok: true });
 }

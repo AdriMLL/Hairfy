@@ -73,11 +73,17 @@ export function BookingFlow({ meta }) {
           startsAt: slot.startsAt,
           name: session.name,
           phone: session.phone,
+          code: session.code,
         }),
       });
       const data = await res.json();
       if (!res.ok) {
         setError(data.error || "No se pudo crear la reserva");
+        if (res.status === 401) {
+          // La sesión guardada ya no es válida (código cambiado, etc.)
+          clearSession();
+          setSession(null);
+        }
         if (res.status === 409) {
           const params = new URLSearchParams({
             date,

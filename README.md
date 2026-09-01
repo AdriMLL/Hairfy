@@ -102,3 +102,11 @@ ninguna visita, Supabase lo pausa y hay que reactivarlo con un clic en su web.
 - Una restricción en la base de datos impide físicamente que un empleado tenga
   dos citas solapadas, aunque dos clientes reserven a la vez.
 - **Nunca** subas `.env.local` a git ni compartas la clave `service_role`.
+- Para reservar, pedir o consultar hace falta el código del cliente: la API
+  nunca revela el código de una ficha existente y **limita los intentos**
+  fallidos de código (anti fuerza bruta).
+- Cabeceras de seguridad HTTP activadas (anti clickjacking y sniffing) en
+  `next.config.mjs`.
+- **Trazabilidad**: todas las acciones (citas, pedidos, reseñas, cambios del
+  admin) quedan registradas en `activity_log` y se consultan en
+  **Admin → Actividad**.

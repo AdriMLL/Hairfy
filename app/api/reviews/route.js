@@ -1,5 +1,7 @@
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { normalizeCode, normalizePhone } from "@/lib/code";
+import { isBlocked, recordFail, clearFails, clientKey, tooManyResponse } from "@/lib/rateLimit";
+import { logActivity } from "@/lib/audit";
 
 export const dynamic = "force-dynamic";
 
@@ -27,15 +29,19 @@ export async function POST(request) {
     return Response.json({ error: "La puntuación debe ser de 1 a 5" }, { status: 400 });
   }
 
+  const key = clientKey(request, phone);
+  if (isBlocked(key)) return tooManyResponse();
   const db = supabaseAdmin();
   const { data: client } = await db
     .from("clients")
-    .select("id,access_code")
+    .select("id,name,access_code")
     .eq("phone", phone)
     .maybeSingle();
   if (!client || !client.access_code || client.access_code !== code) {
+    recordFail(key);
     return Response.json({ error: "Teléfono o código incorrectos" }, { status: 401 });
   }
+  clearFails(key);
 
   const { data: appt } = await db
     .from("appointments")
@@ -64,6 +70,11 @@ export async function POST(request) {
     }
     return Response.json({ error: "No se pudo guardar la valoración" }, { status: 500 });
   }
+
+  await logActivity("cliente", "resena_enviada", {
+    cliente: client.name,
+    puntuacion: rating,
+  });
 
   return Response.json({ ok: true });
 }

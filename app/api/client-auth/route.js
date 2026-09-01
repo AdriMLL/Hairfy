@@ -1,5 +1,7 @@
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { generateAccessCode, normalizeCode, normalizePhone, validateCustomCode } from "@/lib/code";
+import { isBlocked, recordFail, clearFails, clientKey, tooManyResponse } from "@/lib/rateLimit";
+import { logActivity } from "@/lib/audit";
 
 export const dynamic = "force-dynamic";
 
@@ -22,6 +24,8 @@ export async function POST(request) {
   }
 
   if (body?.action === "login") {
+    const key = clientKey(request, phone);
+    if (isBlocked(key)) return tooManyResponse();
     const code = normalizeCode(body?.code);
     if (!code) return Response.json({ error: "Escribe tu código" }, { status: 400 });
     const { data: client } = await db
@@ -30,8 +34,10 @@ export async function POST(request) {
       .eq("phone", phone)
       .maybeSingle();
     if (!client || !client.access_code || client.access_code !== code) {
+      recordFail(key);
       return Response.json({ error: "Teléfono o código incorrectos" }, { status: 401 });
     }
+    clearFails(key);
     return Response.json({ ok: true, name: client.name });
   }
 
@@ -67,11 +73,14 @@ export async function POST(request) {
     if (!accessCode) {
       return Response.json({ error: "No se pudo crear la ficha" }, { status: 500 });
     }
+    await logActivity("cliente", "ficha_creada", { cliente: name, telefono: phone, via: "web" });
     return Response.json({ ok: true, name, accessCode });
   }
 
   if (body?.action === "change-code") {
     // El cliente personaliza su código (letras y números, 4-12 caracteres)
+    const key = clientKey(request, phone);
+    if (isBlocked(key)) return tooManyResponse();
     const current = normalizeCode(body?.code);
     const { data: client } = await db
       .from("clients")
@@ -79,8 +88,10 @@ export async function POST(request) {
       .eq("phone", phone)
       .maybeSingle();
     if (!client || !client.access_code || client.access_code !== current) {
+      recordFail(key);
       return Response.json({ error: "Teléfono o código incorrectos" }, { status: 401 });
     }
+    clearFails(key);
     const newCode = validateCustomCode(body?.newCode);
     if (!newCode) {
       return Response.json(
@@ -98,6 +109,7 @@ export async function POST(request) {
       }
       return Response.json({ error: "No se pudo cambiar el código" }, { status: 500 });
     }
+    await logActivity("cliente", "codigo_cambiado", { cliente: client.name, telefono: phone });
     return Response.json({ ok: true, name: client.name, accessCode: newCode });
   }
 

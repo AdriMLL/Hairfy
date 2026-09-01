@@ -3,6 +3,7 @@ import { requireAdmin, unauthorized } from "@/lib/auth";
 import { buildSlots, isValidDateStr, localToUtc } from "@/lib/availability";
 import { getBusinessHours, sanitizeHours } from "@/lib/hours";
 import { generateAccessCode, normalizePhone } from "@/lib/code";
+import { logActivity } from "@/lib/audit";
 
 export const dynamic = "force-dynamic";
 
@@ -140,6 +141,16 @@ export async function GET(request, { params }) {
       .order("created_at", { ascending: false })
       .limit(100);
     if (error) return Response.json({ error: "Error al cargar la galería" }, { status: 500 });
+    return Response.json({ data });
+  }
+
+  if (resource === "activity") {
+    const { data, error } = await db
+      .from("activity_log")
+      .select("id,actor,action,details,created_at")
+      .order("created_at", { ascending: false })
+      .limit(150);
+    if (error) return Response.json({ error: "Error al cargar la actividad" }, { status: 500 });
     return Response.json({ data });
   }
 
@@ -393,6 +404,12 @@ export async function POST(request, { params }) {
       return Response.json({ error: "No se pudo crear la cita" }, { status: 500 });
     }
 
+    await logActivity("admin", "cita_creada", {
+      cliente: name,
+      fecha: slot.startsAt,
+      via: "mostrador",
+    });
+
     return Response.json({ ok: true, appointmentId: appt.id, accessCode });
   }
 
@@ -531,6 +548,7 @@ export async function PATCH(request, { params }) {
       .from("settings")
       .upsert({ key: "business_hours", value: clean, updated_at: new Date().toISOString() });
     if (error) return Response.json({ error: "No se pudo guardar el horario" }, { status: 500 });
+    await logActivity("admin", "horario_actualizado", {});
     return Response.json({ ok: true, value: clean });
   }
 
@@ -550,6 +568,11 @@ export async function PATCH(request, { params }) {
     if (!current) return Response.json({ error: "Pedido no encontrado" }, { status: 404 });
     const { error } = await db.from("orders").update({ status }).eq("id", id);
     if (error) return Response.json({ error: "No se pudo actualizar" }, { status: 400 });
+    await logActivity(
+      "admin",
+      status === "delivered" ? "pedido_entregado" : status === "cancelled" ? "pedido_cancelado" : "pedido_reabierto",
+      { pedido: id, via: "admin" }
+    );
     // Si se cancela un pedido que estaba activo, devolver el stock
     if (current.status !== "cancelled" && status === "cancelled") {
       const { data: items } = await db
@@ -628,6 +651,10 @@ export async function PATCH(request, { params }) {
     } else if (current.status === "cancelled" && status === "confirmed") {
       await reReserveAppointment(db, id);
     }
+    await logActivity("admin", status === "cancelled" ? "cita_cancelada" : "cita_reactivada", {
+      cita: id,
+      via: "admin",
+    });
     return Response.json({ ok: true });
   }
 
@@ -685,7 +712,11 @@ export async function DELETE(request, { params }) {
     await db.from("orders").delete().eq("client_id", id);
   }
 
-  const { error } = await db.from(resource).delete().eq("id", id);
+  const { error: delErr } = await db.from(resource).delete().eq("id", id);
+  const error = delErr;
+  if (!error) {
+    await logActivity("admin", "elemento_borrado", { tipo: resource, id });
+  }
   if (error) {
     if (error.code === "23503") {
       const consejo =

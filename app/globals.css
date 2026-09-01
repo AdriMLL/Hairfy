@@ -396,6 +396,7 @@ th { color: var(--muted); font-weight: 600; text-transform: uppercase; font-size
 .rating-badge:hover { background: var(--card-2); }
 
 .landing-section { margin-top: 46px; }
+.home-tabs + .landing-section, .home-tabs + section .landing-section:first-child { margin-top: 6px; }
 .section-title { font-size: 1.5rem; margin: 0 0 16px; }
 
 .gallery {
@@ -612,6 +613,29 @@ th { color: var(--muted); font-weight: 600; text-transform: uppercase; font-size
   .admin-select { display: block; margin: 10px 0 16px; }
 }
 
+/* ---------- Actividad (admin) ---------- */
+
+.activity-list { display: flex; flex-direction: column; }
+.activity-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 4px;
+  border-bottom: 1px solid var(--line);
+}
+.activity-row:last-child { border-bottom: none; }
+.activity-icon { font-size: 1.1rem; flex: 0 0 auto; }
+.activity-body { flex: 1; min-width: 0; }
+.activity-when { color: var(--muted); font-size: 0.78rem; white-space: nowrap; }
+.actor-chip { margin-left: 8px; font-size: 0.68rem; padding: 2px 8px; }
+.actor-chip.cliente { color: var(--ok); }
+.actor-chip.admin { color: var(--gold-strong); }
+
+@media (max-width: 560px) {
+  .activity-row { flex-wrap: wrap; }
+  .activity-when { width: 100%; padding-left: 30px; }
+}
+
 /* ---------- Estadísticas (admin) ---------- */
 
 .stat-grid {
@@ -732,7 +756,7 @@ th { color: var(--muted); font-weight: 600; text-transform: uppercase; font-size
   .client-head-actions a { flex: 1; display: flex; }
   .client-head-actions a button { width: 100%; }
 
-  .home-tab { font-size: 0.9rem; padding: 11px 6px; }
+  .home-tab { font-size: 0.8rem; padding: 10px 2px; }
   .step-title h2 { font-size: 1.05rem; }
   .summary { font-size: 0.9rem; }
 

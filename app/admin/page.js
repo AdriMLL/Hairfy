@@ -91,6 +91,7 @@ const NAV = [
     group: "Negocio",
     items: [
       ["stats", "📈", "Estadísticas"],
+      ["activity", "🧾", "Actividad"],
       ["clients", "👥", "Clientes"],
       ["reviews", "⭐", "Reseñas"],
     ],
@@ -202,6 +203,7 @@ function Dashboard({ session }) {
             {tab === "agenda" && <Agenda api={api} />}
             {tab === "orders" && <Orders api={api} />}
             {tab === "stats" && <Stats api={api} />}
+            {tab === "activity" && <Activity api={api} />}
             {tab === "services" && <Services api={api} />}
             {tab === "products" && <Products api={api} />}
             {tab === "employees" && <Employees api={api} />}
@@ -695,6 +697,91 @@ function Orders({ api }) {
               ))}
             </tbody>
           </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------- Actividad (trazabilidad) ----------
+
+const ACTION_LABELS = {
+  cita_creada: ["📅", "Cita creada"],
+  cita_cancelada: ["❌", "Cita cancelada"],
+  cita_reactivada: ["♻️", "Cita reactivada"],
+  pedido_creado: ["🛍️", "Pedido creado"],
+  pedido_entregado: ["✅", "Pedido entregado"],
+  pedido_cancelado: ["❌", "Pedido cancelado"],
+  pedido_reabierto: ["↩️", "Pedido reabierto"],
+  resena_enviada: ["⭐", "Reseña enviada"],
+  ficha_creada: ["👤", "Cliente nuevo"],
+  codigo_cambiado: ["🔑", "Código cambiado"],
+  horario_actualizado: ["🕘", "Horario actualizado"],
+  elemento_borrado: ["🗑", "Elemento borrado"],
+};
+
+function Activity({ api }) {
+  const { data, error } = useList(api, "activity");
+
+  const fmtDetails = (a) => {
+    const d = a.details || {};
+    const parts = [];
+    if (d.cliente) parts.push(d.cliente);
+    if (d.telefono) parts.push(d.telefono);
+    if (d.fecha)
+      parts.push(
+        new Date(d.fecha).toLocaleString("es-ES", {
+          timeZone: "Europe/Madrid",
+          day: "numeric",
+          month: "short",
+          hour: "2-digit",
+          minute: "2-digit",
+        })
+      );
+    if (d.total != null) parts.push(`${Number(d.total).toFixed(2)} €`);
+    if (d.puntuacion) parts.push(`${d.puntuacion}★`);
+    if (d.tipo) parts.push(d.tipo);
+    if (d.via) parts.push(`vía ${d.via}`);
+    return parts.join(" · ");
+  };
+
+  return (
+    <div className="card">
+      <h2>Actividad reciente</h2>
+      <p style={{ color: "var(--muted)", marginTop: 0, fontSize: "0.9rem" }}>
+        Registro de todo lo que pasa en la web y en el panel: quién hizo qué y
+        cuándo. Las últimas 150 acciones.
+      </p>
+      {error && <p className="msg-error">{error}</p>}
+      {data && data.length === 0 && (
+        <p style={{ color: "var(--muted)" }}>Todavía no hay actividad registrada.</p>
+      )}
+      {data && data.length > 0 && (
+        <div className="activity-list">
+          {data.map((a) => {
+            const [icon, label] = ACTION_LABELS[a.action] || ["•", a.action];
+            return (
+              <div key={a.id} className="activity-row">
+                <span className="activity-icon" aria-hidden="true">{icon}</span>
+                <div className="activity-body">
+                  <div>
+                    <strong>{label}</strong>
+                    <span className={`chip actor-chip ${a.actor}`}>{a.actor}</span>
+                  </div>
+                  <div className="who">{fmtDetails(a) || "—"}</div>
+                </div>
+                <span className="activity-when">
+                  {new Date(a.created_at).toLocaleString("es-ES", {
+                    timeZone: "Europe/Madrid",
+                    day: "numeric",
+                    month: "short",
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  })}
+                </span>
+              </div>
+            );
+          })}
         </div>
       )}
     </div>
