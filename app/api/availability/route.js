@@ -1,10 +1,11 @@
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
-import { availableSlots, isValidDateStr, isBookableDate, localToUtc } from "@/lib/availability";
+import { buildSlots, isValidDateStr, isBookableDate, localToUtc } from "@/lib/availability";
+import { getBusinessHours } from "@/lib/hours";
 
 export const dynamic = "force-dynamic";
 
 // GET /api/availability?date=YYYY-MM-DD&employeeId=...&serviceId=...
-// Devuelve los huecos libres de ese empleado para ese servicio y día.
+// Devuelve TODOS los huecos del día (los ocupados con free=false).
 export async function GET(request) {
   const { searchParams } = new URL(request.url);
   const date = searchParams.get("date");
@@ -29,20 +30,22 @@ export async function GET(request) {
     return Response.json({ error: "Servicio no encontrado" }, { status: 404 });
   }
 
-  // Citas confirmadas del empleado ese día (con margen de un día por zonas horarias)
   const dayStart = localToUtc(date, "00:00").toISOString();
   const dayEnd = new Date(localToUtc(date, "00:00").getTime() + 86400000).toISOString();
-  const { data: busy, error: bErr } = await db
-    .from("appointments")
-    .select("starts_at,ends_at")
-    .eq("employee_id", employeeId)
-    .eq("status", "confirmed")
-    .gte("ends_at", dayStart)
-    .lte("starts_at", dayEnd);
+  const [{ data: busy, error: bErr }, hours] = await Promise.all([
+    db
+      .from("appointments")
+      .select("starts_at,ends_at")
+      .eq("employee_id", employeeId)
+      .eq("status", "confirmed")
+      .gte("ends_at", dayStart)
+      .lte("starts_at", dayEnd),
+    getBusinessHours(),
+  ]);
   if (bErr) {
     return Response.json({ error: "Error al consultar la agenda" }, { status: 500 });
   }
 
-  const slots = availableSlots(date, service.duration_min, busy || []);
+  const slots = buildSlots(date, service.duration_min, busy || [], hours);
   return Response.json({ slots });
 }

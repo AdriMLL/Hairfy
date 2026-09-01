@@ -38,7 +38,9 @@ export async function POST(request) {
   const since = new Date(Date.now() - 30 * 86400000).toISOString();
   const { data, error } = await db
     .from("appointments")
-    .select("id,starts_at,ends_at,status,services(name,price_eur),employees(name)")
+    .select(
+      "id,starts_at,ends_at,status,services(name,price_eur),employees(name),appointment_products(quantity,products(name,price_eur))"
+    )
     .eq("client_id", client.id)
     .gte("starts_at", since)
     .order("starts_at", { ascending: true });
@@ -55,6 +57,11 @@ export async function POST(request) {
     service: a.services?.name,
     price: a.services?.price_eur,
     employee: a.employees?.name,
+    products: (a.appointment_products || []).map((p) => ({
+      name: p.products?.name,
+      quantity: p.quantity,
+      price: p.products?.price_eur,
+    })),
     cancellable:
       a.status === "confirmed" && new Date(a.starts_at).getTime() > limit,
   }));
@@ -105,5 +112,25 @@ export async function PATCH(request) {
   if (error) {
     return Response.json({ error: "No se pudo cancelar" }, { status: 500 });
   }
+
+  // Devolver al stock los productos reservados con la cita
+  const { data: items } = await db
+    .from("appointment_products")
+    .select("product_id,quantity")
+    .eq("appointment_id", id);
+  for (const it of items || []) {
+    const { data: prod } = await db
+      .from("products")
+      .select("stock")
+      .eq("id", it.product_id)
+      .single();
+    if (prod) {
+      await db
+        .from("products")
+        .update({ stock: prod.stock + it.quantity })
+        .eq("id", it.product_id);
+    }
+  }
+
   return Response.json({ ok: true });
 }

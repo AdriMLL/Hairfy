@@ -13,8 +13,14 @@ peluquería gestione su agenda.
   citas, gestionar servicios (precio/duración), empleados y ver clientes (con
   su código, por si alguien lo pierde).
 
-> Si vienes de la versión 1, ejecuta también
-> `supabase/migracion-2-codigo-cliente.sql` en el SQL Editor de Supabase.
+Además: al reservar se ven también las horas ya ocupadas (tachadas), si solo
+hay un profesional se asigna automáticamente, el cliente puede reservar
+productos de la tienda junto a su cita (se pagan al recoger), y el horario de
+apertura se configura desde **Admin → Horario** (sin tocar código).
+
+> Si vienes de una versión anterior, ejecuta también en el SQL Editor de
+> Supabase: `supabase/migracion-2-codigo-cliente.sql` y
+> `supabase/migracion-3-productos-horario.sql`.
 
 **Stack:** Next.js (React) + Supabase (base de datos PostgreSQL + login).
 Todo funciona con los planes **gratuitos** de Vercel y Supabase.

@@ -247,6 +247,32 @@ button.block { width: 100%; }
   color: #17120b;
   border-color: transparent;
 }
+.slot.busy {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  text-decoration: line-through;
+  color: #675c50;
+  background: transparent;
+  border-style: dashed;
+  cursor: not-allowed;
+  user-select: none;
+}
+
+/* Cantidades de producto */
+.qty-row { display: flex; align-items: center; gap: 12px; margin-top: 8px; }
+.qty-btn {
+  width: 34px; height: 34px;
+  padding: 0;
+  border-radius: 8px;
+  font-size: 1.15rem;
+  line-height: 1;
+  background: var(--card-2);
+  color: var(--gold-strong);
+  border: 1px solid var(--line);
+}
+.qty-btn:hover { border-color: var(--gold-dark); filter: none; }
+.qty-num { min-width: 20px; text-align: center; font-weight: 700; }
 
 .summary {
   margin-top: 18px;

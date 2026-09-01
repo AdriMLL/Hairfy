@@ -1,12 +1,44 @@
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
-import { availableSlots, isValidDateStr, isBookableDate, localToUtc } from "@/lib/availability";
+import { buildSlots, isValidDateStr, isBookableDate, localToUtc } from "@/lib/availability";
+import { getBusinessHours } from "@/lib/hours";
 import { generateAccessCode, normalizePhone } from "@/lib/code";
 
 export const dynamic = "force-dynamic";
 
-// POST /api/booking
-// Crea una cita. Toda la validación ocurre aquí, en el servidor:
-// nunca nos fiamos de lo que envía el navegador.
+// Valida y normaliza los productos pedidos: [{productId, quantity}]
+function parseProducts(raw) {
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set();
+  const out = [];
+  for (const p of raw.slice(0, 10)) {
+    const id = typeof p?.productId === "string" ? p.productId : null;
+    const qty = Number.isInteger(p?.quantity) ? p.quantity : 0;
+    if (!id || seen.has(id) || qty < 1 || qty > 5) continue;
+    seen.add(id);
+    out.push({ productId: id, quantity: qty });
+  }
+  return out;
+}
+
+// Devuelve el stock reservado (compensación si algo falla a mitad)
+async function restock(db, items) {
+  for (const it of items) {
+    const { data: prod } = await db
+      .from("products")
+      .select("stock")
+      .eq("id", it.productId)
+      .single();
+    if (prod) {
+      await db
+        .from("products")
+        .update({ stock: prod.stock + it.quantity })
+        .eq("id", it.productId);
+    }
+  }
+}
+
+// POST /api/booking — crea una cita (con productos opcionales).
+// Toda la validación ocurre en el servidor.
 export async function POST(request) {
   let body;
   try {
@@ -18,6 +50,7 @@ export async function POST(request) {
   const { serviceId, employeeId, date, startsAt } = body || {};
   const name = typeof body?.name === "string" ? body.name.trim().slice(0, 80) : "";
   const phone = normalizePhone(body?.phone);
+  const wantedProducts = parseProducts(body?.products);
 
   if (!serviceId || !employeeId || !isValidDateStr(date) || !startsAt) {
     return Response.json({ error: "Faltan datos de la reserva" }, { status: 400 });
@@ -34,16 +67,16 @@ export async function POST(request) {
 
   const db = supabaseAdmin();
 
-  const [{ data: service }, { data: employee }] = await Promise.all([
+  const [{ data: service }, { data: employee }, hours] = await Promise.all([
     db.from("services").select("id,duration_min").eq("id", serviceId).eq("active", true).single(),
     db.from("employees").select("id").eq("id", employeeId).eq("active", true).single(),
+    getBusinessHours(),
   ]);
   if (!service || !employee) {
     return Response.json({ error: "Servicio o empleado no válido" }, { status: 400 });
   }
 
-  // Recalculamos la disponibilidad en el servidor y comprobamos que el hueco
-  // pedido es realmente uno de los huecos libres.
+  // Recalcular la disponibilidad en el servidor: el hueco pedido debe estar libre
   const dayStart = localToUtc(date, "00:00").toISOString();
   const dayEnd = new Date(localToUtc(date, "00:00").getTime() + 86400000).toISOString();
   const { data: busy } = await db
@@ -54,8 +87,8 @@ export async function POST(request) {
     .gte("ends_at", dayStart)
     .lte("starts_at", dayEnd);
 
-  const slots = availableSlots(date, service.duration_min, busy || []);
-  const slot = slots.find((s) => s.startsAt === startsAt);
+  const slots = buildSlots(date, service.duration_min, busy || [], hours);
+  const slot = slots.find((s) => s.startsAt === startsAt && s.free);
   if (!slot) {
     return Response.json(
       { error: "Ese hueco ya no está disponible. Elige otra hora." },
@@ -100,6 +133,35 @@ export async function POST(request) {
     clientId = created.id;
   }
 
+  // Reservar stock de productos (si hay). Descuento condicional: solo si queda stock.
+  const reservedItems = [];
+  const productNames = [];
+  for (const it of wantedProducts) {
+    const { data: prod } = await db
+      .from("products")
+      .select("id,name,stock,active")
+      .eq("id", it.productId)
+      .single();
+    if (!prod || !prod.active || prod.stock < it.quantity) {
+      await restock(db, reservedItems);
+      return Response.json(
+        { error: `No queda stock suficiente de "${prod?.name || "un producto"}"` },
+        { status: 409 }
+      );
+    }
+    const { error: uErr } = await db
+      .from("products")
+      .update({ stock: prod.stock - it.quantity })
+      .eq("id", prod.id)
+      .gte("stock", it.quantity);
+    if (uErr) {
+      await restock(db, reservedItems);
+      return Response.json({ error: "No se pudo reservar el producto" }, { status: 500 });
+    }
+    reservedItems.push(it);
+    productNames.push(`${prod.name} x${it.quantity}`);
+  }
+
   const { data: appt, error: aErr } = await db
     .from("appointments")
     .insert({
@@ -113,7 +175,7 @@ export async function POST(request) {
     .single();
 
   if (aErr) {
-    // 23P01 = violación de la restricción anti-solapes (alguien reservó antes)
+    await restock(db, reservedItems);
     if (aErr.code === "23P01") {
       return Response.json(
         { error: "Ese hueco se acaba de ocupar. Elige otra hora." },
@@ -123,10 +185,25 @@ export async function POST(request) {
     return Response.json({ error: "No se pudo crear la cita" }, { status: 500 });
   }
 
+  if (reservedItems.length) {
+    const rows = reservedItems.map((it) => ({
+      appointment_id: appt.id,
+      product_id: it.productId,
+      quantity: it.quantity,
+    }));
+    const { error: pErr } = await db.from("appointment_products").insert(rows);
+    if (pErr) {
+      // La cita queda creada; devolvemos el stock para no bloquearlo
+      await restock(db, reservedItems);
+      productNames.length = 0;
+    }
+  }
+
   return Response.json({
     ok: true,
     appointmentId: appt.id,
     startsAt: appt.starts_at,
     accessCode,
+    products: productNames,
   });
 }

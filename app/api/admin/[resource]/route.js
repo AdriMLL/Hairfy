@@ -1,6 +1,7 @@
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { requireAdmin, unauthorized } from "@/lib/auth";
 import { isValidDateStr, localToUtc } from "@/lib/availability";
+import { sanitizeHours } from "@/lib/hours";
 
 export const dynamic = "force-dynamic";
 
@@ -24,7 +25,13 @@ const RESOURCES = {
     insertFields: [],
     updateFields: ["name", "phone"],
   },
+  products: {
+    select: "id,name,description,price_eur,stock,active,created_at",
+    insertFields: ["name", "description", "price_eur", "stock"],
+    updateFields: ["name", "description", "price_eur", "stock", "active"],
+  },
   appointments: null, // gestionado aparte (necesita joins)
+  settings: null, // gestionado aparte (validación específica)
 };
 
 function pick(body, fields) {
@@ -33,6 +40,48 @@ function pick(body, fields) {
     if (body[f] !== undefined) out[f] = body[f];
   }
   return out;
+}
+
+// Devuelve al stock los productos de una cita (al cancelarla)
+async function restockAppointment(db, appointmentId) {
+  const { data: items } = await db
+    .from("appointment_products")
+    .select("product_id,quantity")
+    .eq("appointment_id", appointmentId);
+  for (const it of items || []) {
+    const { data: prod } = await db
+      .from("products")
+      .select("stock")
+      .eq("id", it.product_id)
+      .single();
+    if (prod) {
+      await db
+        .from("products")
+        .update({ stock: prod.stock + it.quantity })
+        .eq("id", it.product_id);
+    }
+  }
+}
+
+// Intenta volver a descontar el stock (al reactivar una cita)
+async function reReserveAppointment(db, appointmentId) {
+  const { data: items } = await db
+    .from("appointment_products")
+    .select("product_id,quantity")
+    .eq("appointment_id", appointmentId);
+  for (const it of items || []) {
+    const { data: prod } = await db
+      .from("products")
+      .select("stock")
+      .eq("id", it.product_id)
+      .single();
+    if (prod && prod.stock >= it.quantity) {
+      await db
+        .from("products")
+        .update({ stock: prod.stock - it.quantity })
+        .eq("id", it.product_id);
+    }
+  }
 }
 
 export async function GET(request, { params }) {
@@ -52,13 +101,22 @@ export async function GET(request, { params }) {
     const { data, error } = await db
       .from("appointments")
       .select(
-        "id,starts_at,ends_at,status,employees(name),services(name,price_eur),clients(name,phone)"
+        "id,starts_at,ends_at,status,employees(name),services(name,price_eur),clients(name,phone),appointment_products(quantity,products(name))"
       )
       .gte("starts_at", dayStart)
       .lt("starts_at", dayEnd)
       .order("starts_at");
     if (error) return Response.json({ error: "Error al cargar citas" }, { status: 500 });
     return Response.json({ data });
+  }
+
+  if (resource === "settings") {
+    const { data } = await db
+      .from("settings")
+      .select("key,value")
+      .eq("key", "business_hours")
+      .maybeSingle();
+    return Response.json({ data: { business_hours: data?.value ?? null } });
   }
 
   const cfg = RESOURCES[resource];
@@ -107,25 +165,57 @@ export async function PATCH(request, { params }) {
   } catch {
     return Response.json({ error: "Petición no válida" }, { status: 400 });
   }
-  const id = body?.id;
-  if (!id) return Response.json({ error: "Falta el id" }, { status: 400 });
   const db = supabaseAdmin();
 
+  if (resource === "settings") {
+    if (body?.key !== "business_hours") {
+      return Response.json({ error: "Ajuste desconocido" }, { status: 400 });
+    }
+    const clean = sanitizeHours(body?.value);
+    if (!clean) {
+      return Response.json(
+        { error: "Horario no válido: revisa las horas (apertura < cierre)" },
+        { status: 400 }
+      );
+    }
+    const { error } = await db
+      .from("settings")
+      .upsert({ key: "business_hours", value: clean, updated_at: new Date().toISOString() });
+    if (error) return Response.json({ error: "No se pudo guardar el horario" }, { status: 500 });
+    return Response.json({ ok: true, value: clean });
+  }
+
+  const id = body?.id;
+  if (!id) return Response.json({ error: "Falta el id" }, { status: 400 });
+
   if (resource === "appointments") {
-    // Solo se permite cambiar el estado (cancelar / reconfirmar)
+    // Solo se permite cambiar el estado (cancelar / reactivar)
     const status = body?.status;
     if (!["confirmed", "cancelled"].includes(status)) {
       return Response.json({ error: "Estado no válido" }, { status: 400 });
     }
+    const { data: current } = await db
+      .from("appointments")
+      .select("status")
+      .eq("id", id)
+      .maybeSingle();
+    if (!current) return Response.json({ error: "Cita no encontrada" }, { status: 404 });
+
     const { error } = await db.from("appointments").update({ status }).eq("id", id);
     if (error) {
       if (error.code === "23P01") {
         return Response.json(
-          { error: "No se puede reconfirmar: el hueco ya está ocupado" },
+          { error: "No se puede reactivar: el hueco ya está ocupado" },
           { status: 409 }
         );
       }
       return Response.json({ error: "No se pudo actualizar" }, { status: 400 });
+    }
+    // Mantener el stock de productos en orden
+    if (current.status === "confirmed" && status === "cancelled") {
+      await restockAppointment(db, id);
+    } else if (current.status === "cancelled" && status === "confirmed") {
+      await reReserveAppointment(db, id);
     }
     return Response.json({ ok: true });
   }

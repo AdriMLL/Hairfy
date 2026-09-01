@@ -146,6 +146,11 @@ export default function MisCitasPage() {
                           )}
                         </div>
                         <div className="who">con {a.employee}</div>
+                        {a.products?.length > 0 && (
+                          <div className="who">
+                            🛍️ {a.products.map((p) => `${p.name} x${p.quantity}`).join(", ")}
+                          </div>
+                        )}
                       </div>
                       <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
                         <span
