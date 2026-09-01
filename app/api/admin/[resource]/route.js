@@ -97,21 +97,35 @@ export async function GET(request, { params }) {
   const db = supabaseAdmin();
 
   if (resource === "appointments") {
+    // Un día (?date=) o un rango (?from=&to=, ambos incluidos, máx. 62 días)
     const { searchParams } = new URL(request.url);
     const date = searchParams.get("date");
-    if (!isValidDateStr(date)) {
+    const from = searchParams.get("from");
+    const to = searchParams.get("to");
+    let rangeStart;
+    let rangeEnd;
+    if (isValidDateStr(from) && isValidDateStr(to)) {
+      rangeStart = localToUtc(from, "00:00");
+      rangeEnd = new Date(localToUtc(to, "00:00").getTime() + 86400000);
+      const days = (rangeEnd.getTime() - rangeStart.getTime()) / 86400000;
+      if (days < 1 || days > 62) {
+        return Response.json({ error: "Rango de fechas no válido" }, { status: 400 });
+      }
+    } else if (isValidDateStr(date)) {
+      rangeStart = localToUtc(date, "00:00");
+      rangeEnd = new Date(rangeStart.getTime() + 86400000);
+    } else {
       return Response.json({ error: "Fecha no válida" }, { status: 400 });
     }
-    const dayStart = localToUtc(date, "00:00").toISOString();
-    const dayEnd = new Date(localToUtc(date, "00:00").getTime() + 86400000).toISOString();
     const { data, error } = await db
       .from("appointments")
       .select(
         "id,starts_at,ends_at,status,employees(name),services(name,price_eur),clients(name,phone,email),appointment_products(quantity,products(name))"
       )
-      .gte("starts_at", dayStart)
-      .lt("starts_at", dayEnd)
-      .order("starts_at");
+      .gte("starts_at", rangeStart.toISOString())
+      .lt("starts_at", rangeEnd.toISOString())
+      .order("starts_at")
+      .limit(2000);
     if (error) return Response.json({ error: "Error al cargar citas" }, { status: 500 });
     return Response.json({ data });
   }
