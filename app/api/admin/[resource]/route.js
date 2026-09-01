@@ -154,47 +154,102 @@ export async function GET(request, { params }) {
   }
 
   if (resource === "stats") {
-    const weeks = 8;
+    const { searchParams } = new URL(request.url);
+    const weeks = Math.min(26, Math.max(4, parseInt(searchParams.get("weeks")) || 8));
     const since = new Date(Date.now() - weeks * 7 * 86400000).toISOString();
-    const { data, error } = await db
-      .from("appointments")
-      .select("id,starts_at,status,services(name,price_eur),clients(id,name)")
-      .gte("starts_at", since)
-      .order("starts_at")
-      .limit(5000);
-    if (error) return Response.json({ error: "Error al calcular estadísticas" }, { status: 500 });
 
-    const confirmed = (data || []).filter((a) => a.status === "confirmed");
-    const weekly = new Map();
-    const byService = new Map();
-    const byClient = new Map();
-    let revenue = 0;
-    for (const a of confirmed) {
-      const d = new Date(a.starts_at);
-      // Lunes de esa semana como clave
+    const [appts, ordersRes, newClientsRes] = await Promise.all([
+      db
+        .from("appointments")
+        .select("id,starts_at,status,services(name,price_eur),clients(id,name),employees(name),appointment_products(quantity,products(name,price_eur))")
+        .gte("starts_at", since)
+        .order("starts_at")
+        .limit(5000),
+      db
+        .from("orders")
+        .select("id,status,created_at,order_items(quantity,price_eur,products(name))")
+        .gte("created_at", since)
+        .limit(2000),
+      db.from("clients").select("id", { count: "exact", head: true }).gte("created_at", since),
+    ]);
+    if (appts.error) {
+      return Response.json({ error: "Error al calcular estadísticas" }, { status: 500 });
+    }
+
+    const all = appts.data || [];
+    const confirmed = all.filter((a) => a.status === "confirmed");
+    const cancelled = all.length - confirmed.length;
+
+    const weekKey = (iso) => {
+      const d = new Date(iso);
       const monday = new Date(d);
       const dow = (d.getUTCDay() + 6) % 7;
       monday.setUTCDate(d.getUTCDate() - dow);
-      const wk = monday.toISOString().slice(0, 10);
+      return monday.toISOString().slice(0, 10);
+    };
+
+    const weekly = new Map();
+    const byService = new Map();
+    const byClient = new Map();
+    const byEmployee = new Map();
+    const byProduct = new Map();
+    let serviceRevenue = 0;
+    let pastConfirmed = 0;
+    const now = Date.now();
+
+    for (const a of confirmed) {
       const price = Number(a.services?.price_eur || 0);
-      revenue += price;
-      const w = weekly.get(wk) || { count: 0, revenue: 0 };
+      serviceRevenue += price;
+      if (new Date(a.starts_at).getTime() < now) pastConfirmed += 1;
+      const w = weekly.get(weekKey(a.starts_at)) || { count: 0, revenue: 0 };
       w.count += 1;
       w.revenue += price;
-      weekly.set(wk, w);
+      weekly.set(weekKey(a.starts_at), w);
       const sName = a.services?.name || "—";
       byService.set(sName, (byService.get(sName) || 0) + 1);
+      const eName = a.employees?.name || "—";
+      byEmployee.set(eName, (byEmployee.get(eName) || 0) + 1);
       if (a.clients?.id) {
         const c = byClient.get(a.clients.id) || { name: a.clients.name, count: 0 };
         c.count += 1;
         byClient.set(a.clients.id, c);
       }
+      for (const p of a.appointment_products || []) {
+        const key = p.products?.name || "—";
+        const acc = byProduct.get(key) || { qty: 0, revenue: 0 };
+        acc.qty += p.quantity;
+        acc.revenue += p.quantity * Number(p.products?.price_eur || 0);
+        byProduct.set(key, acc);
+      }
     }
+
+    let productRevenue = 0;
+    let orderCount = 0;
+    for (const o of ordersRes.data || []) {
+      if (o.status === "cancelled") continue;
+      orderCount += 1;
+      for (const it of o.order_items || []) {
+        productRevenue += it.quantity * Number(it.price_eur || 0);
+        const key = it.products?.name || "—";
+        const acc = byProduct.get(key) || { qty: 0, revenue: 0 };
+        acc.qty += it.quantity;
+        acc.revenue += it.quantity * Number(it.price_eur || 0);
+        byProduct.set(key, acc);
+      }
+    }
+
     return Response.json({
       data: {
         weeks,
-        totalAppointments: confirmed.length,
-        totalRevenue: revenue,
+        totals: {
+          appointments: confirmed.length,
+          cancelled,
+          serviceRevenue,
+          productRevenue,
+          orders: orderCount,
+          newClients: newClientsRes.count ?? 0,
+          avgTicket: pastConfirmed > 0 ? serviceRevenue / confirmed.length : 0,
+        },
         weekly: [...weekly.entries()]
           .sort((a, b) => (a[0] < b[0] ? -1 : 1))
           .map(([weekStart, v]) => ({ weekStart, ...v })),
@@ -205,6 +260,13 @@ export async function GET(request, { params }) {
         topClients: [...byClient.values()]
           .sort((a, b) => b.count - a.count)
           .slice(0, 8),
+        topProducts: [...byProduct.entries()]
+          .sort((a, b) => b[1].qty - a[1].qty)
+          .slice(0, 8)
+          .map(([name, v]) => ({ name, ...v })),
+        byEmployee: [...byEmployee.entries()]
+          .sort((a, b) => b[1] - a[1])
+          .map(([name, count]) => ({ name, count })),
       },
     });
   }
@@ -540,7 +602,8 @@ export async function DELETE(request, { params }) {
   const user = await requireAdmin(request);
   if (!user) return unauthorized();
   const { resource } = params;
-  if (!["gallery", "reviews"].includes(resource)) {
+  const DELETABLE = ["gallery", "reviews", "appointments", "clients", "employees", "services", "products"];
+  if (!DELETABLE.includes(resource)) {
     return Response.json({ error: "Operación no permitida" }, { status: 405 });
   }
   const { searchParams } = new URL(request.url);
@@ -555,7 +618,32 @@ export async function DELETE(request, { params }) {
     }
   }
 
+  if (resource === "appointments") {
+    // Devolver el stock de productos ligados a la cita antes de borrarla
+    await restockAppointment(db, id);
+  }
+
+  if (resource === "clients") {
+    // Borrar la ficha completa: citas, pedidos y reseñas incluidos
+    const { data: appts } = await db.from("appointments").select("id").eq("client_id", id);
+    for (const a of appts || []) {
+      await restockAppointment(db, a.id);
+    }
+    await db.from("reviews").delete().eq("client_id", id);
+    await db.from("appointments").delete().eq("client_id", id);
+    await db.from("orders").delete().eq("client_id", id);
+  }
+
   const { error } = await db.from(resource).delete().eq("id", id);
-  if (error) return Response.json({ error: "No se pudo borrar" }, { status: 400 });
+  if (error) {
+    if (error.code === "23503") {
+      const consejo =
+        resource === "employees"
+          ? "Este empleado tiene citas en el historial: desactívalo en su lugar."
+          : "Está en uso en citas o pedidos: ocúltalo en su lugar.";
+      return Response.json({ error: consejo }, { status: 409 });
+    }
+    return Response.json({ error: "No se pudo borrar" }, { status: 400 });
+  }
   return Response.json({ ok: true });
 }

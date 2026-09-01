@@ -1,5 +1,5 @@
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
-import { generateAccessCode, normalizeCode, normalizePhone } from "@/lib/code";
+import { generateAccessCode, normalizeCode, normalizePhone, validateCustomCode } from "@/lib/code";
 
 export const dynamic = "force-dynamic";
 
@@ -68,6 +68,37 @@ export async function POST(request) {
       return Response.json({ error: "No se pudo crear la ficha" }, { status: 500 });
     }
     return Response.json({ ok: true, name, accessCode });
+  }
+
+  if (body?.action === "change-code") {
+    // El cliente personaliza su código (letras y números, 4-12 caracteres)
+    const current = normalizeCode(body?.code);
+    const { data: client } = await db
+      .from("clients")
+      .select("id,name,access_code")
+      .eq("phone", phone)
+      .maybeSingle();
+    if (!client || !client.access_code || client.access_code !== current) {
+      return Response.json({ error: "Teléfono o código incorrectos" }, { status: 401 });
+    }
+    const newCode = validateCustomCode(body?.newCode);
+    if (!newCode) {
+      return Response.json(
+        { error: "El código debe tener de 4 a 12 letras o números (sin espacios)" },
+        { status: 400 }
+      );
+    }
+    const { error } = await db
+      .from("clients")
+      .update({ access_code: newCode })
+      .eq("id", client.id);
+    if (error) {
+      if (error.code === "23505") {
+        return Response.json({ error: "Ese código ya está en uso, prueba otro" }, { status: 409 });
+      }
+      return Response.json({ error: "No se pudo cambiar el código" }, { status: 500 });
+    }
+    return Response.json({ ok: true, name: client.name, accessCode: newCode });
   }
 
   return Response.json({ error: "Acción desconocida" }, { status: 400 });

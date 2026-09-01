@@ -66,6 +66,35 @@ export default function MisCitasPage() {
   const [rating, setRating] = useState(0);
   const [comment, setComment] = useState("");
   const [showShop, setShowShop] = useState(false);
+  const [showCodeChange, setShowCodeChange] = useState(false);
+  const [newCode, setNewCode] = useState("");
+
+  async function changeCode(e) {
+    e.preventDefault();
+    setError("");
+    setNotice("");
+    setLoading(true);
+    try {
+      const res = await fetch("/api/client-auth", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "change-code", phone, code, newCode }),
+      });
+      const data = await res.json();
+      if (!res.ok) setError(data.error || "No se pudo cambiar el código");
+      else {
+        setCode(data.accessCode);
+        saveSession({ name: data.name, phone, code: data.accessCode });
+        setNotice(`Código actualizado: ${data.accessCode}. Úsalo a partir de ahora.`);
+        setShowCodeChange(false);
+        setNewCode("");
+      }
+    } catch {
+      setError("Error de conexión. Inténtalo de nuevo.");
+    } finally {
+      setLoading(false);
+    }
+  }
 
   async function cancelOrder(orderId) {
     if (!window.confirm("¿Cancelar este pedido?")) return;
@@ -174,7 +203,7 @@ export default function MisCitasPage() {
               id="code"
               value={code}
               onChange={(e) => setCode(e.target.value)}
-              placeholder="HF-XXXX"
+              placeholder="FB-000000"
               required
               style={{ textTransform: "uppercase", letterSpacing: "2px" }}
             />
@@ -214,7 +243,33 @@ export default function MisCitasPage() {
               <button className="secondary" onClick={() => setShowShop((s) => !s)}>
                 🛍️ {showShop ? "Cerrar tienda" : "Hacer pedido"}
               </button>
+              <button className="secondary" onClick={() => setShowCodeChange((s) => !s)}>
+                🔑 Mi código
+              </button>
             </div>
+
+            {showCodeChange && (
+              <form onSubmit={changeCode} style={{ marginTop: 16, padding: 14, border: "1px dashed var(--gold-dark)", borderRadius: 12 }}>
+                <p style={{ margin: "0 0 4px" }}>
+                  Tu código actual: <strong style={{ color: "var(--gold-strong)", letterSpacing: 2 }}>{code}</strong>
+                </p>
+                <label htmlFor="new-code">Nuevo código (4-12 letras o números; el "FB-" se pone solo)</label>
+                <input
+                  id="new-code"
+                  value={newCode}
+                  onChange={(e) => setNewCode(e.target.value)}
+                  required
+                  minLength={4}
+                  maxLength={12}
+                  placeholder="MARIA22"
+                  style={{ textTransform: "uppercase", letterSpacing: "2px", maxWidth: 260 }}
+                />
+                <div style={{ marginTop: 10, display: "flex", gap: 8 }}>
+                  <button type="submit" className="small" disabled={loading}>Guardar código</button>
+                  <button type="button" className="secondary small" onClick={() => setShowCodeChange(false)}>Cancelar</button>
+                </div>
+              </form>
+            )}
 
             {notice && <p className="msg-ok">{notice}</p>}
             {error && <p className="msg-error">{error}</p>}

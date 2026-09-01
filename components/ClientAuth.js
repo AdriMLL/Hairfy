@@ -91,7 +91,7 @@ export function ClientAuth({ onAuth, intro }) {
       {mode === "login" && (
         <>
           <label>Tu código de cliente</label>
-          <input value={code} onChange={(e) => setCode(e.target.value)} required placeholder="HF-XXXX" style={{ textTransform: "uppercase", letterSpacing: "2px" }} />
+          <input value={code} onChange={(e) => setCode(e.target.value)} required placeholder="FB-000000" style={{ textTransform: "uppercase", letterSpacing: "2px" }} />
         </>
       )}
       <div style={{ marginTop: 14 }}>

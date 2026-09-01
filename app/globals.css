@@ -527,6 +527,13 @@ th { color: var(--muted); font-weight: 600; text-transform: uppercase; font-size
 
 /* ---------- Estadísticas (admin) ---------- */
 
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 10px;
+  margin-top: 16px;
+}
+
 .stat-box {
   background: var(--bg-soft);
   border: 1px solid var(--line);
@@ -558,6 +565,29 @@ th { color: var(--muted); font-weight: 600; text-transform: uppercase; font-size
   min-width: 2px;
 }
 .bar-value { font-size: 0.8rem; color: var(--ink); font-variant-numeric: tabular-nums; }
+
+/* Sugerencias de clientes (nueva cita del admin) */
+.suggest-box {
+  margin-top: 6px;
+  background: var(--card-2);
+  border: 1px solid var(--gold-dark);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.suggest-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  border-bottom: 1px solid var(--line);
+  color: var(--ink);
+  padding: 9px 12px;
+  font-size: 0.9rem;
+  border-radius: 0;
+  cursor: pointer;
+}
+.suggest-item:hover { background: var(--bg-soft); filter: none; transform: none; }
 
 /* Botón de subida de archivos */
 .upload-btn {

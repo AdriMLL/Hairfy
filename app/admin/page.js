@@ -245,6 +245,16 @@ function Agenda({ api }) {
     }
   }
 
+  async function removeAppt(id) {
+    if (!window.confirm("¿Borrar esta cita definitivamente? (para mantener el historial, mejor cancélala)")) return;
+    try {
+      await api(`appointments?id=${id}`, { method: "DELETE" });
+      reload();
+    } catch (e) {
+      setError(e.message);
+    }
+  }
+
   const fmtTime = (iso) =>
     new Date(iso).toLocaleTimeString("es-ES", {
       timeZone: "Europe/Madrid", hour: "2-digit", minute: "2-digit",
@@ -307,7 +317,7 @@ function Agenda({ api }) {
                     {a.status === "cancelled" ? "Cancelada" : "Confirmada"}
                   </span>
                 </td>
-                <td>
+                <td style={{ whiteSpace: "nowrap" }}>
                   {a.status === "confirmed" ? (
                     <button className="danger small" onClick={() => setStatus(a.id, "cancelled")}>
                       Cancelar
@@ -317,6 +327,14 @@ function Agenda({ api }) {
                       Reactivar
                     </button>
                   )}
+                  <button
+                    className="secondary small"
+                    style={{ marginLeft: 6 }}
+                    title="Borrar definitivamente"
+                    onClick={() => removeAppt(a.id)}
+                  >
+                    🗑
+                  </button>
                 </td>
               </tr>
             ))}
@@ -359,6 +377,16 @@ function Services({ api }) {
     }
   }
 
+  async function remove(s) {
+    if (!window.confirm(`¿Borrar el servicio "${s.name}"?`)) return;
+    try {
+      await api(`services?id=${s.id}`, { method: "DELETE" });
+      reload();
+    } catch (e2) {
+      setError(e2.message);
+    }
+  }
+
   return (
     <div className="card">
       <h2>Servicios</h2>
@@ -390,9 +418,12 @@ function Services({ api }) {
                 <td>{s.duration_min} min</td>
                 <td>{Number(s.price_eur).toFixed(2)} €</td>
                 <td>{s.active ? "Sí" : "No"}</td>
-                <td>
+                <td style={{ whiteSpace: "nowrap" }}>
                   <button className="secondary small" onClick={() => toggle(s)}>
                     {s.active ? "Ocultar" : "Mostrar"}
+                  </button>
+                  <button className="danger small" style={{ marginLeft: 6 }} onClick={() => remove(s)}>
+                    Borrar
                   </button>
                 </td>
               </tr>
@@ -409,6 +440,7 @@ function Services({ api }) {
 function NewAppointment({ api, defaultDate, onDone }) {
   const [services, setServices] = useState([]);
   const [employees, setEmployees] = useState([]);
+  const [clients, setClients] = useState([]);
   const [serviceId, setServiceId] = useState("");
   const [employeeId, setEmployeeId] = useState("");
   const [date, setDate] = useState(defaultDate || todayStr());
@@ -416,19 +448,41 @@ function NewAppointment({ api, defaultDate, onDone }) {
   const [startsAt, setStartsAt] = useState("");
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
+  const [showSuggestions, setShowSuggestions] = useState(false);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    Promise.all([api("services"), api("employees")])
-      .then(([s, e]) => {
+    Promise.all([api("services"), api("employees"), api("clients")])
+      .then(([s, e, c]) => {
         setServices((s.data || []).filter((x) => x.active));
         const activos = (e.data || []).filter((x) => x.active);
         setEmployees(activos);
         if (activos.length === 1) setEmployeeId(activos[0].id);
+        setClients(c.data || []);
       })
       .catch((e2) => setError(e2.message));
   }, [api]);
+
+  // Buscador de clientes existentes (por nombre o teléfono)
+  const query = (name + " " + phone).trim().toLowerCase();
+  const suggestions =
+    showSuggestions && query.length >= 2
+      ? clients
+          .filter(
+            (c) =>
+              c.name.toLowerCase().includes(name.trim().toLowerCase()) &&
+              (phone.trim() === "" || (c.phone || "").includes(phone.replace(/\D/g, "")))
+          )
+          .filter((c) => name.trim() !== "" || phone.trim() !== "")
+          .slice(0, 6)
+      : [];
+
+  function pickClient(c) {
+    setName(c.name);
+    setPhone(c.phone);
+    setShowSuggestions(false);
+  }
 
   useEffect(() => {
     setStartsAt("");
@@ -465,16 +519,47 @@ function NewAppointment({ api, defaultDate, onDone }) {
   return (
     <form onSubmit={submit} style={{ marginTop: 14, padding: 16, border: "1px dashed var(--gold-dark)", borderRadius: 12 }}>
       <h3 style={{ margin: "0 0 6px" }}>Apuntar cita (cliente por teléfono o en tienda)</h3>
-      <div className="row">
+      <div className="row" style={{ position: "relative" }}>
         <div>
           <label>Nombre del cliente</label>
-          <input value={name} onChange={(e) => setName(e.target.value)} required minLength={2} placeholder="Juan Pérez" />
+          <input
+            value={name}
+            onChange={(e) => { setName(e.target.value); setShowSuggestions(true); }}
+            onFocus={() => setShowSuggestions(true)}
+            required
+            minLength={2}
+            placeholder="Escribe para buscar…"
+            autoComplete="off"
+          />
         </div>
         <div>
           <label>Teléfono</label>
-          <input type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} required minLength={9} placeholder="600123456" />
+          <input
+            type="tel"
+            value={phone}
+            onChange={(e) => { setPhone(e.target.value); setShowSuggestions(true); }}
+            onFocus={() => setShowSuggestions(true)}
+            required
+            minLength={9}
+            placeholder="600123456"
+            autoComplete="off"
+          />
         </div>
       </div>
+      {suggestions.length > 0 && (
+        <div className="suggest-box">
+          {suggestions.map((c) => (
+            <button type="button" key={c.id} className="suggest-item" onClick={() => pickClient(c)}>
+              <strong>{c.name}</strong>
+              <span style={{ color: "var(--muted)" }}> · {c.phone} · {c.access_code}</span>
+            </button>
+          ))}
+          <div style={{ color: "var(--muted)", fontSize: "0.78rem", padding: "6px 12px" }}>
+            Clientes existentes — elige uno para no duplicar fichas, o sigue
+            escribiendo para crear uno nuevo.
+          </div>
+        </div>
+      )}
       <div className="row">
         <div>
           <label>Servicio</label>
@@ -618,19 +703,47 @@ function Orders({ api }) {
 
 // ---------- Estadísticas ----------
 
+function StatTable({ title, rows, render }) {
+  return (
+    <div className="card" style={{ flex: 1, minWidth: 220 }}>
+      <h2>{title}</h2>
+      {rows.length === 0 ? (
+        <p style={{ color: "var(--muted)" }}>Sin datos todavía.</p>
+      ) : (
+        <table>
+          <tbody>
+            {rows.map((r, i) => (
+              <tr key={i}>
+                <td>{r.name}</td>
+                <td style={{ textAlign: "right", color: "var(--gold-strong)", fontWeight: 700, whiteSpace: "nowrap" }}>
+                  {render(r)}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
+  );
+}
+
 function Stats({ api }) {
+  const [weeks, setWeeks] = useState(8);
   const [data, setData] = useState(null);
   const [error, setError] = useState("");
 
   useEffect(() => {
-    api("stats")
+    setData(null);
+    api(`stats?weeks=${weeks}`)
       .then((d) => setData(d.data))
       .catch((e) => setError(e.message));
-  }, [api]);
+  }, [api, weeks]);
 
   if (error) return <div className="card"><p className="msg-error">{error}</p></div>;
   if (!data) return <div className="card"><p>Calculando…</p></div>;
 
+  const t = data.totals;
+  const totalRevenue = t.serviceRevenue + t.productRevenue;
   const maxCount = Math.max(1, ...data.weekly.map((w) => w.count));
   const fmtWeek = (iso) =>
     new Date(iso + "T12:00:00Z").toLocaleDateString("es-ES", { day: "numeric", month: "short" });
@@ -638,17 +751,56 @@ function Stats({ api }) {
   return (
     <>
       <div className="card">
-        <h2>Últimas {data.weeks} semanas</h2>
-        <div className="row" style={{ marginBottom: 14 }}>
+        <div className="topbar">
+          <h2 style={{ margin: 0 }}>Resumen del negocio</h2>
+          <div className="pills">
+            {[4, 8, 12].map((w) => (
+              <button
+                key={w}
+                className={`pill small ${weeks === w ? "selected" : ""}`}
+                style={{ padding: "6px 14px" }}
+                onClick={() => setWeeks(w)}
+              >
+                {w} sem.
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="stat-grid">
           <div className="stat-box">
-            <div className="stat-num">{data.totalAppointments}</div>
+            <div className="stat-num">{totalRevenue.toFixed(0)} €</div>
+            <div className="stat-label">ingresos totales estimados</div>
+          </div>
+          <div className="stat-box">
+            <div className="stat-num">{t.appointments}</div>
             <div className="stat-label">citas confirmadas</div>
           </div>
           <div className="stat-box">
-            <div className="stat-num">{data.totalRevenue.toFixed(0)} €</div>
-            <div className="stat-label">ingresos estimados (servicios)</div>
+            <div className="stat-num">{t.serviceRevenue.toFixed(0)} €</div>
+            <div className="stat-label">en servicios</div>
+          </div>
+          <div className="stat-box">
+            <div className="stat-num">{t.productRevenue.toFixed(0)} €</div>
+            <div className="stat-label">en productos ({t.orders} pedidos)</div>
+          </div>
+          <div className="stat-box">
+            <div className="stat-num">{t.avgTicket.toFixed(2)} €</div>
+            <div className="stat-label">ticket medio por cita</div>
+          </div>
+          <div className="stat-box">
+            <div className="stat-num">{t.newClients}</div>
+            <div className="stat-label">clientes nuevos</div>
+          </div>
+          <div className="stat-box">
+            <div className="stat-num">{t.cancelled}</div>
+            <div className="stat-label">citas canceladas</div>
           </div>
         </div>
+      </div>
+
+      <div className="card">
+        <h2>Citas e ingresos por semana</h2>
         <div className="bars">
           {data.weekly.map((w) => (
             <div key={w.weekStart} className="bar-row">
@@ -665,45 +817,34 @@ function Stats({ api }) {
         </div>
       </div>
 
+      {data.byEmployee.length > 1 && (
+        <div className="card">
+          <h2>Citas por profesional</h2>
+          <div className="bars">
+            {data.byEmployee.map((e) => (
+              <div key={e.name} className="bar-row">
+                <span className="bar-label">{e.name}</span>
+                <div className="bar-track">
+                  <div
+                    className="bar-fill"
+                    style={{ width: `${(e.count / Math.max(1, data.byEmployee[0].count)) * 100}%` }}
+                  />
+                </div>
+                <span className="bar-value">{e.count} citas</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       <div className="row" style={{ alignItems: "stretch" }}>
-        <div className="card" style={{ flex: 1 }}>
-          <h2>Servicios más pedidos</h2>
-          {data.topServices.length === 0 ? (
-            <p style={{ color: "var(--muted)" }}>Sin datos todavía.</p>
-          ) : (
-            <table>
-              <tbody>
-                {data.topServices.map((s) => (
-                  <tr key={s.name}>
-                    <td>{s.name}</td>
-                    <td style={{ textAlign: "right", color: "var(--gold-strong)", fontWeight: 700 }}>
-                      {s.count}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
-        <div className="card" style={{ flex: 1 }}>
-          <h2>Clientes que más repiten</h2>
-          {data.topClients.length === 0 ? (
-            <p style={{ color: "var(--muted)" }}>Sin datos todavía.</p>
-          ) : (
-            <table>
-              <tbody>
-                {data.topClients.map((c, i) => (
-                  <tr key={i}>
-                    <td>{c.name}</td>
-                    <td style={{ textAlign: "right", color: "var(--gold-strong)", fontWeight: 700 }}>
-                      {c.count}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
+        <StatTable title="Servicios más pedidos" rows={data.topServices} render={(r) => r.count} />
+        <StatTable title="Clientes que más repiten" rows={data.topClients} render={(r) => r.count} />
+        <StatTable
+          title="Productos más vendidos"
+          rows={data.topProducts}
+          render={(r) => `${r.qty} · ${r.revenue.toFixed(0)} €`}
+        />
       </div>
     </>
   );
@@ -972,9 +1113,24 @@ function Products({ api }) {
                     </div>
                   </td>
                   <td>{p.active ? "Sí" : "No"}</td>
-                  <td>
+                  <td style={{ whiteSpace: "nowrap" }}>
                     <button className="secondary small" onClick={() => patch(p.id, { active: !p.active })}>
                       {p.active ? "Ocultar" : "Mostrar"}
+                    </button>
+                    <button
+                      className="danger small"
+                      style={{ marginLeft: 6 }}
+                      onClick={async () => {
+                        if (!window.confirm(`¿Borrar el producto "${p.name}"?`)) return;
+                        try {
+                          await api(`products?id=${p.id}`, { method: "DELETE" });
+                          reload();
+                        } catch (e2) {
+                          setError(e2.message);
+                        }
+                      }}
+                    >
+                      Borrar
                     </button>
                   </td>
                 </tr>
@@ -1240,9 +1396,24 @@ function Employees({ api }) {
               <tr key={emp.id}>
                 <td>{emp.name}</td>
                 <td>{emp.active ? "Sí" : "No"}</td>
-                <td>
+                <td style={{ whiteSpace: "nowrap" }}>
                   <button className="secondary small" onClick={() => toggle(emp)}>
                     {emp.active ? "Desactivar" : "Activar"}
+                  </button>
+                  <button
+                    className="danger small"
+                    style={{ marginLeft: 6 }}
+                    onClick={async () => {
+                      if (!window.confirm(`¿Borrar a "${emp.name}"? Si tiene citas en el historial no se podrá (desactívalo).`)) return;
+                      try {
+                        await api(`employees?id=${emp.id}`, { method: "DELETE" });
+                        reload();
+                      } catch (e2) {
+                        setError(e2.message);
+                      }
+                    }}
+                  >
+                    Borrar
                   </button>
                 </td>
               </tr>
@@ -1257,8 +1428,23 @@ function Employees({ api }) {
 // ---------- Clientes ----------
 
 function Clients({ api }) {
-  const { data, error } = useList(api, "clients");
+  const { data, error, setError, reload } = useList(api, "clients");
   const [q, setQ] = useState("");
+
+  async function remove(c) {
+    if (
+      !window.confirm(
+        `¿Borrar la ficha de "${c.name}"? Se borrarán TAMBIÉN todas sus citas, pedidos y reseñas. Esta acción no se puede deshacer.`
+      )
+    )
+      return;
+    try {
+      await api(`clients?id=${c.id}`, { method: "DELETE" });
+      reload();
+    } catch (e2) {
+      setError(e2.message);
+    }
+  }
 
   const filtered = (data || []).filter(
     (c) =>
@@ -1274,7 +1460,7 @@ function Clients({ api }) {
       {data && (
         <div className="table-scroll">
           <table>
-            <thead><tr><th>Nombre</th><th>Teléfono</th><th>Código</th><th>Cliente desde</th></tr></thead>
+            <thead><tr><th>Nombre</th><th>Teléfono</th><th>Código</th><th>Cliente desde</th><th></th></tr></thead>
             <tbody>
               {filtered.map((c) => (
                 <tr key={c.id}>
@@ -1282,6 +1468,9 @@ function Clients({ api }) {
                   <td>{c.phone}</td>
                   <td style={{ color: "var(--gold-strong)", fontWeight: 600 }}>{c.access_code || "—"}</td>
                   <td>{new Date(c.created_at).toLocaleDateString("es-ES")}</td>
+                  <td>
+                    <button className="danger small" onClick={() => remove(c)}>Borrar</button>
+                  </td>
                 </tr>
               ))}
             </tbody>
