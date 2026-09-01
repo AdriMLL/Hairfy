@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { ClientAuth } from "@/components/ClientAuth";
 import { loadSession, saveSession, clearSession } from "@/lib/session";
+import { t, locale } from "@/lib/i18n";
 
 // Flujo completo de reserva: identificarse -> servicio -> día/hora -> confirmar.
 // Se muestra dentro de la pestaña "Reservar cita" del Inicio.
@@ -109,7 +110,7 @@ export function BookingFlow({ meta }) {
   }
 
   if (done) {
-    const when = new Date(done.startsAt).toLocaleString("es-ES", {
+    const when = new Date(done.startsAt).toLocaleString(locale(), {
       timeZone: "Europe/Madrid",
       weekday: "long",
       day: "numeric",
@@ -119,28 +120,28 @@ export function BookingFlow({ meta }) {
     });
     return (
       <div className="card" style={{ textAlign: "center" }}>
-        <h2 style={{ marginTop: 0, fontSize: "1.6rem" }}>✨ ¡Cita confirmada!</h2>
+        <h2 style={{ marginTop: 0, fontSize: "1.6rem" }}>{t("book.doneTitle")}</h2>
         <p style={{ fontSize: "1.05rem" }}>
-          Te esperamos el <strong style={{ color: "var(--gold-strong)" }}>{when}</strong>
+          {t("book.doneWhen")} <strong style={{ color: "var(--gold-strong)" }}>{when}</strong>
         </p>
         {session?.code && (
           <div className="code-box">
-            <small>Tu código de cliente — con él consultas o cancelas tus citas</small>
+            <small>{t("book.codeNote")}</small>
             <span className="code">{session.code}</span>
           </div>
         )}
         <div style={{ display: "flex", gap: 10, justifyContent: "center", flexWrap: "wrap" }}>
           <a href="/mis-citas">
-            <button className="secondary">Ver mis citas</button>
+            <button className="secondary">{t("book.seeMine")}</button>
           </a>
-          <button onClick={() => window.location.reload()}>Hacer otra reserva</button>
+          <button onClick={() => window.location.reload()}>{t("book.another")}</button>
         </div>
       </div>
     );
   }
 
   if (!ready) {
-    return <div className="card"><p style={{ color: "var(--muted)" }}>Cargando…</p></div>;
+    return <div className="card"><p style={{ color: "var(--muted)" }}>{t("loading")}</p></div>;
   }
 
   if (!session) {
@@ -148,7 +149,7 @@ export function BookingFlow({ meta }) {
       <div className="card">
         <ClientAuth
           onAuth={setSession}
-          intro="Antes de reservar, dinos quién eres: si ya tienes código entra con él, y si es tu primera vez crea tu ficha en 10 segundos."
+          intro={t("auth.introBook")}
         />
       </div>
     );
@@ -158,17 +159,17 @@ export function BookingFlow({ meta }) {
     <form className="card" onSubmit={submit}>
       <div className="topbar" style={{ marginBottom: 14 }}>
         <p style={{ margin: 0, color: "var(--muted)" }}>
-          Reservando como{" "}
+          {t("book.as")}{" "}
           <strong style={{ color: "var(--gold-strong)" }}>{session.name}</strong>
         </p>
         <button type="button" className="secondary small" onClick={logout}>
-          No soy yo
+          {t("book.notme")}
         </button>
       </div>
 
       <div className="step-title" style={{ marginTop: 0 }}>
         <span className="step-num">1</span>
-        <h2 style={{ margin: 0 }}>Elige tu servicio</h2>
+        <h2 style={{ margin: 0 }}>{t("book.step1")}</h2>
       </div>
       <div className="option-grid">
         {meta?.services?.map((s) => (
@@ -180,18 +181,18 @@ export function BookingFlow({ meta }) {
           >
             <span className="name">{s.name}</span>
             <span className="meta">
-              {s.duration_min} min · <span className="price">{Number(s.price_eur).toFixed(2)} €</span>
+              {s.duration_min} {t("min")} · <span className="price">{Number(s.price_eur).toFixed(2)} €</span>
             </span>
           </button>
         ))}
-        {!meta && <p style={{ color: "var(--muted)" }}>Cargando servicios…</p>}
+        {!meta && <p style={{ color: "var(--muted)" }}>{t("loading")}</p>}
       </div>
 
       {service && !singleEmployee && (
         <>
           <div className="step-title">
             <span className="step-num">2</span>
-            <h2 style={{ margin: 0 }}>¿Con quién?</h2>
+            <h2 style={{ margin: 0 }}>{t("book.step2")}</h2>
           </div>
           <div className="pills">
             {meta?.employees?.map((emp) => (
@@ -212,14 +213,14 @@ export function BookingFlow({ meta }) {
         <>
           <div className="step-title">
             <span className="step-num">{stepDay}</span>
-            <h2 style={{ margin: 0 }}>Día y hora</h2>
+            <h2 style={{ margin: 0 }}>{t("book.stepDay")}</h2>
           </div>
           {singleEmployee && (
             <p style={{ color: "var(--muted)", margin: "0 0 4px" }}>
-              Te atenderá <strong style={{ color: "var(--ink)" }}>{employee.name}</strong>
+              {t("book.servedBy")} <strong style={{ color: "var(--ink)" }}>{employee.name}</strong>
             </p>
           )}
-          <label htmlFor="booking-date">Día</label>
+          <label htmlFor="booking-date">{t("book.day")}</label>
           <input
             id="booking-date"
             type="date"
@@ -231,10 +232,10 @@ export function BookingFlow({ meta }) {
           />
           {slots && (
             <>
-              <label>Hora — las tachadas ya están reservadas</label>
+              <label>{t("book.hours")}</label>
               {slots.length === 0 ? (
                 <p style={{ color: "var(--muted)" }}>
-                  Ese día está cerrado o ya no quedan horas. Prueba otro día.
+                  {t("book.closed")}
                 </p>
               ) : (
                 <>
@@ -258,7 +259,7 @@ export function BookingFlow({ meta }) {
                   </div>
                   {slots.every((s) => !s.free) && (
                     <p style={{ color: "var(--muted)", marginTop: 10 }}>
-                      Todas las horas de ese día están reservadas. Prueba otro día.
+                      {t("book.allBusy")}
                     </p>
                   )}
                 </>
@@ -272,11 +273,11 @@ export function BookingFlow({ meta }) {
         <>
           <div className="step-title">
             <span className="step-num">{stepData}</span>
-            <h2 style={{ margin: 0 }}>Confirma tu reserva</h2>
+            <h2 style={{ margin: 0 }}>{t("book.confirmTitle")}</h2>
           </div>
           <div className="summary">
-            <strong>{service.name}</strong> con <strong>{employee.name}</strong> ·{" "}
-            {new Date(slot.startsAt).toLocaleString("es-ES", {
+            <strong>{service.name}</strong> {t("book.with")} <strong>{employee.name}</strong> ·{" "}
+            {new Date(slot.startsAt).toLocaleString(locale(), {
               timeZone: "Europe/Madrid",
               weekday: "long",
               day: "numeric",
@@ -285,11 +286,11 @@ export function BookingFlow({ meta }) {
               minute: "2-digit",
             })}
             <br />
-            Precio: <strong>{Number(service.price_eur).toFixed(2)} €</strong>
+            {t("book.price")}: <strong>{Number(service.price_eur).toFixed(2)} €</strong>
           </div>
           <div style={{ marginTop: 18 }}>
             <button type="submit" className="block" disabled={loading}>
-              {loading ? "Reservando…" : "Confirmar reserva ✨"}
+              {loading ? t("book.booking") : t("book.confirm")}
             </button>
           </div>
         </>

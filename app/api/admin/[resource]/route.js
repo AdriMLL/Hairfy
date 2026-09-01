@@ -4,6 +4,7 @@ import { buildSlots, isValidDateStr, localToUtc } from "@/lib/availability";
 import { getBusinessHours, sanitizeHours } from "@/lib/hours";
 import { generateAccessCode, normalizePhone } from "@/lib/code";
 import { logActivity } from "@/lib/audit";
+import { sendBookingConfirmation, sendBookingUpdate } from "@/lib/email";
 
 export const dynamic = "force-dynamic";
 
@@ -23,9 +24,9 @@ const RESOURCES = {
     updateFields: ["name", "active"], // hours se valida aparte
   },
   clients: {
-    select: "id,name,phone,access_code,created_at",
+    select: "id,name,phone,email,access_code,created_at",
     insertFields: [],
-    updateFields: ["name", "phone"],
+    updateFields: ["name", "phone", "email"],
   },
   products: {
     select: "id,name,description,price_eur,stock,active,image_url,image_path,created_at",
@@ -106,7 +107,7 @@ export async function GET(request, { params }) {
     const { data, error } = await db
       .from("appointments")
       .select(
-        "id,starts_at,ends_at,status,employees(name),services(name,price_eur),clients(name,phone),appointment_products(quantity,products(name))"
+        "id,starts_at,ends_at,status,employees(name),services(name,price_eur),clients(name,phone,email),appointment_products(quantity,products(name))"
       )
       .gte("starts_at", dayStart)
       .lt("starts_at", dayEnd)
@@ -323,8 +324,8 @@ export async function POST(request, { params }) {
 
     const db2 = supabaseAdmin();
     const [{ data: service }, { data: employee }, generalHours] = await Promise.all([
-      db2.from("services").select("id,duration_min").eq("id", serviceId).eq("active", true).single(),
-      db2.from("employees").select("id,hours").eq("id", employeeId).eq("active", true).single(),
+      db2.from("services").select("id,name,duration_min,price_eur").eq("id", serviceId).eq("active", true).single(),
+      db2.from("employees").select("id,name,hours").eq("id", employeeId).eq("active", true).single(),
       getBusinessHours(),
     ]);
     if (!service || !employee) {
@@ -356,7 +357,7 @@ export async function POST(request, { params }) {
     let accessCode;
     const { data: existing } = await db2
       .from("clients")
-      .select("id,access_code")
+      .select("id,access_code,email")
       .eq("phone", phone)
       .maybeSingle();
     if (existing) {
@@ -409,6 +410,16 @@ export async function POST(request, { params }) {
       fecha: slot.startsAt,
       via: "mostrador",
     });
+
+    if (existing?.email) {
+      await sendBookingConfirmation(existing.email, {
+        name,
+        service: service.name,
+        employee: employee.name,
+        startsAt: slot.startsAt,
+        price: service.price_eur,
+      });
+    }
 
     return Response.json({ ok: true, appointmentId: appt.id, accessCode });
   }
@@ -619,6 +630,91 @@ export async function PATCH(request, { params }) {
     }
     const { error } = await db.from("employees").update({ hours: hoursValue }).eq("id", id);
     if (error) return Response.json({ error: "No se pudo guardar el horario" }, { status: 400 });
+    return Response.json({ ok: true });
+  }
+
+  if (resource === "appointments" && body?.startsAt) {
+    // Reprogramar/editar una cita: nuevo servicio, día u hora
+    const { serviceId, employeeId, date, startsAt } = body;
+    if (!serviceId || !employeeId || !isValidDateStr(date)) {
+      return Response.json({ error: "Faltan datos" }, { status: 400 });
+    }
+    const { data: appt } = await db
+      .from("appointments")
+      .select("id,status,client_id,clients(name,email)")
+      .eq("id", id)
+      .maybeSingle();
+    if (!appt) return Response.json({ error: "Cita no encontrada" }, { status: 404 });
+    if (appt.status !== "confirmed") {
+      return Response.json({ error: "Reactiva la cita antes de editarla" }, { status: 400 });
+    }
+
+    const [{ data: service }, { data: employee }, generalHours] = await Promise.all([
+      db.from("services").select("id,name,duration_min").eq("id", serviceId).eq("active", true).single(),
+      db.from("employees").select("id,name,hours").eq("id", employeeId).eq("active", true).single(),
+      getBusinessHours(),
+    ]);
+    if (!service || !employee) {
+      return Response.json({ error: "Servicio o empleado no válido" }, { status: 400 });
+    }
+    const hours = sanitizeHours(employee.hours) ?? generalHours;
+
+    const dayStart = localToUtc(date, "00:00").toISOString();
+    const dayEnd = new Date(localToUtc(date, "00:00").getTime() + 86400000).toISOString();
+    const { data: busy } = await db
+      .from("appointments")
+      .select("id,starts_at,ends_at")
+      .eq("employee_id", employeeId)
+      .eq("status", "confirmed")
+      .gte("ends_at", dayStart)
+      .lte("starts_at", dayEnd);
+    // La propia cita no cuenta como ocupada
+    const busyOthers = (busy || []).filter((b) => b.id !== id);
+
+    const slots = buildSlots(date, service.duration_min, busyOthers, hours);
+    const slot = slots.find((s) => s.startsAt === startsAt && s.free);
+    if (!slot) {
+      return Response.json(
+        { error: "Ese hueco no está disponible. Elige otra hora." },
+        { status: 409 }
+      );
+    }
+
+    const { error } = await db
+      .from("appointments")
+      .update({
+        service_id: serviceId,
+        employee_id: employeeId,
+        starts_at: slot.startsAt,
+        ends_at: slot.endsAt,
+        reminder_sent_at: null, // que vuelva a recibir recordatorio para la nueva hora
+      })
+      .eq("id", id);
+    if (error) {
+      if (error.code === "23P01") {
+        return Response.json(
+          { error: "Ese hueco se acaba de ocupar. Elige otra hora." },
+          { status: 409 }
+        );
+      }
+      return Response.json({ error: "No se pudo modificar la cita" }, { status: 500 });
+    }
+
+    await logActivity("admin", "cita_modificada", {
+      cliente: appt.clients?.name,
+      fecha: slot.startsAt,
+      via: "admin",
+    });
+
+    if (appt.clients?.email) {
+      await sendBookingUpdate(appt.clients.email, {
+        name: appt.clients?.name || "cliente",
+        service: service.name,
+        employee: employee.name,
+        startsAt: slot.startsAt,
+      });
+    }
+
     return Response.json({ ok: true });
   }
 

@@ -18,7 +18,7 @@ async function authClient(request, body) {
   const db = supabaseAdmin();
   const { data: client } = await db
     .from("clients")
-    .select("id,name,access_code")
+    .select("id,name,access_code,email")
     .eq("phone", phone)
     .maybeSingle();
   if (!client || !client.access_code || client.access_code !== code) {
@@ -108,7 +108,7 @@ export async function POST(request) {
     ),
   }));
 
-  return Response.json({ name: client.name, appointments, orders });
+  return Response.json({ name: client.name, email: client.email, appointments, orders });
 }
 
 // PATCH: cancela una cita del cliente (hasta cancelMinHours antes)

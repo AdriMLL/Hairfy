@@ -4,6 +4,7 @@ import { getBusinessHours, sanitizeHours } from "@/lib/hours";
 import { generateAccessCode, normalizeCode, normalizePhone } from "@/lib/code";
 import { isBlocked, recordFail, clearFails, clientKey, tooManyResponse } from "@/lib/rateLimit";
 import { logActivity } from "@/lib/audit";
+import { sendBookingConfirmation } from "@/lib/email";
 
 export const dynamic = "force-dynamic";
 
@@ -70,8 +71,8 @@ export async function POST(request) {
   const db = supabaseAdmin();
 
   const [{ data: service }, { data: employee }, generalHours] = await Promise.all([
-    db.from("services").select("id,duration_min").eq("id", serviceId).eq("active", true).single(),
-    db.from("employees").select("id,hours").eq("id", employeeId).eq("active", true).single(),
+    db.from("services").select("id,name,duration_min,price_eur").eq("id", serviceId).eq("active", true).single(),
+    db.from("employees").select("id,name,hours").eq("id", employeeId).eq("active", true).single(),
     getBusinessHours(),
   ]);
   if (!service || !employee) {
@@ -108,7 +109,7 @@ export async function POST(request) {
   let accessCode;
   const { data: existing } = await db
     .from("clients")
-    .select("id,access_code")
+    .select("id,access_code,email")
     .eq("phone", phone)
     .maybeSingle();
   if (existing) {
@@ -220,6 +221,17 @@ export async function POST(request) {
     fecha: appt.starts_at,
     via: "web",
   });
+
+  // Email de confirmación (si el cliente tiene email configurado)
+  if (existing?.email) {
+    await sendBookingConfirmation(existing.email, {
+      name,
+      service: service.name,
+      employee: employee.name,
+      startsAt: appt.starts_at,
+      price: service.price_eur,
+    });
+  }
 
   return Response.json({
     ok: true,

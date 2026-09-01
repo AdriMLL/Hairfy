@@ -237,6 +237,7 @@ function Agenda({ api }) {
   const { data, error, setError, reload } = useList(api, `appointments?date=${date}`);
   const [showNew, setShowNew] = useState(false);
   const [newDone, setNewDone] = useState("");
+  const [editing, setEditing] = useState(null); // cita en edición
 
   async function setStatus(id, status) {
     try {
@@ -277,6 +278,18 @@ function Agenda({ api }) {
         </div>
       </div>
       {newDone && <p className="msg-ok">{newDone}</p>}
+      {editing && (
+        <EditAppointment
+          api={api}
+          appt={editing}
+          onDone={(msg) => {
+            setEditing(null);
+            setNewDone(msg);
+            reload();
+          }}
+          onCancel={() => setEditing(null)}
+        />
+      )}
       {showNew && (
         <NewAppointment
           api={api}
@@ -327,6 +340,16 @@ function Agenda({ api }) {
                   ) : (
                     <button className="secondary small" onClick={() => setStatus(a.id, "confirmed")}>
                       Reactivar
+                    </button>
+                  )}
+                  {a.status === "confirmed" && (
+                    <button
+                      className="secondary small"
+                      style={{ marginLeft: 6 }}
+                      title="Editar cita (servicio, día u hora)"
+                      onClick={() => setEditing(editing?.id === a.id ? null : a)}
+                    >
+                      ✏️
                     </button>
                   )}
                   <button
@@ -627,6 +650,144 @@ function NewAppointment({ api, defaultDate, onDone }) {
   );
 }
 
+// ---------- Editar cita ----------
+
+function EditAppointment({ api, appt, onDone, onCancel }) {
+  const [services, setServices] = useState([]);
+  const [employees, setEmployees] = useState([]);
+  const [serviceId, setServiceId] = useState("");
+  const [employeeId, setEmployeeId] = useState("");
+  const [date, setDate] = useState(appt.starts_at.slice(0, 10));
+  const [slots, setSlots] = useState(null);
+  const [startsAt, setStartsAt] = useState("");
+  const [error, setError] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    Promise.all([api("services"), api("employees")])
+      .then(([s, e]) => {
+        const svcs = (s.data || []).filter((x) => x.active);
+        const emps = (e.data || []).filter((x) => x.active);
+        setServices(svcs);
+        setEmployees(emps);
+        // Preseleccionar los valores actuales de la cita por nombre
+        const svc = svcs.find((x) => x.name === appt.services?.name);
+        if (svc) setServiceId(svc.id);
+        const emp = emps.find((x) => x.name === appt.employees?.name);
+        if (emp) setEmployeeId(emp.id);
+        else if (emps.length === 1) setEmployeeId(emps[0].id);
+      })
+      .catch((e2) => setError(e2.message));
+  }, [api, appt]);
+
+  useEffect(() => {
+    setStartsAt("");
+    setSlots(null);
+    if (!serviceId || !employeeId || !date) return;
+    const params = new URLSearchParams({
+      date,
+      employeeId,
+      serviceId,
+      excludeId: appt.id,
+    });
+    fetch(`/api/availability?${params}`)
+      .then((r) => r.json())
+      .then((d) => setSlots(d.slots ?? []))
+      .catch(() => setError("No se pudo consultar la disponibilidad"));
+  }, [serviceId, employeeId, date, appt.id]);
+
+  async function submit(e) {
+    e.preventDefault();
+    setError("");
+    setSaving(true);
+    try {
+      await api("appointments", {
+        method: "PATCH",
+        body: JSON.stringify({ id: appt.id, serviceId, employeeId, date, startsAt }),
+      });
+      onDone(
+        `Cita de ${appt.clients?.name} modificada. ${appt.clients?.email ? "Se le ha avisado por email." : ""}`
+      );
+    } catch (e2) {
+      setError(e2.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <form onSubmit={submit} style={{ marginTop: 14, padding: 16, border: "1px dashed var(--gold-dark)", borderRadius: 12 }}>
+      <div className="topbar">
+        <h3 style={{ margin: 0 }}>
+          ✏️ Editar cita de {appt.clients?.name} (
+          {new Date(appt.starts_at).toLocaleString("es-ES", {
+            timeZone: "Europe/Madrid",
+            day: "numeric",
+            month: "short",
+            hour: "2-digit",
+            minute: "2-digit",
+          })}
+          )
+        </h3>
+        <button type="button" className="secondary small" onClick={onCancel}>Cerrar</button>
+      </div>
+      <div className="row">
+        <div>
+          <label>Servicio</label>
+          <select value={serviceId} onChange={(e) => setServiceId(e.target.value)} required>
+            <option value="">— Elige —</option>
+            {services.map((s) => (
+              <option key={s.id} value={s.id}>{s.name} · {s.duration_min} min</option>
+            ))}
+          </select>
+        </div>
+        {employees.length > 1 && (
+          <div>
+            <label>Profesional</label>
+            <select value={employeeId} onChange={(e) => setEmployeeId(e.target.value)} required>
+              <option value="">— Elige —</option>
+              {employees.map((emp) => (
+                <option key={emp.id} value={emp.id}>{emp.name}</option>
+              ))}
+            </select>
+          </div>
+        )}
+        <div>
+          <label>Día</label>
+          <input type="date" value={date} onChange={(e) => setDate(e.target.value)} required />
+        </div>
+      </div>
+      {slots && (
+        <>
+          <label>Nueva hora</label>
+          <div className="slots">
+            {slots.map((s) =>
+              s.free ? (
+                <button
+                  type="button"
+                  key={s.startsAt}
+                  className={`slot ${startsAt === s.startsAt ? "selected" : ""}`}
+                  onClick={() => setStartsAt(s.startsAt)}
+                >
+                  {s.time}
+                </button>
+              ) : (
+                <span key={s.startsAt} className="slot busy">{s.time}</span>
+              )
+            )}
+          </div>
+        </>
+      )}
+      <div style={{ marginTop: 14 }}>
+        <button type="submit" disabled={saving || !startsAt}>
+          {saving ? "Guardando…" : "Guardar cambios"}
+        </button>
+      </div>
+      {error && <p className="msg-error">{error}</p>}
+    </form>
+  );
+}
+
 // ---------- Pedidos ----------
 
 function Orders({ api }) {
@@ -718,6 +879,9 @@ const ACTION_LABELS = {
   codigo_cambiado: ["🔑", "Código cambiado"],
   horario_actualizado: ["🕘", "Horario actualizado"],
   elemento_borrado: ["🗑", "Elemento borrado"],
+  cita_modificada: ["✏️", "Cita modificada"],
+  recordatorio_enviado: ["⏰", "Recordatorio enviado"],
+  email_actualizado: ["✉️", "Email actualizado"],
 };
 
 function Activity({ api }) {

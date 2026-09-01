@@ -87,6 +87,18 @@ h1, h2, h3, .logo-word {
   border-color: var(--line);
   background: var(--bg-soft);
 }
+.site-nav { align-items: center; }
+.lang-select {
+  width: auto;
+  padding: 6px 8px;
+  border-radius: 8px;
+  font-size: 0.85rem;
+  font-weight: 700;
+  background: var(--bg-soft);
+  border: 1px solid var(--line);
+  color: var(--gold-strong);
+  cursor: pointer;
+}
 
 /* ---------- Estructura ---------- */
 

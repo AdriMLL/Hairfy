@@ -11,6 +11,7 @@ export async function GET(request) {
   const date = searchParams.get("date");
   const employeeId = searchParams.get("employeeId");
   const serviceId = searchParams.get("serviceId");
+  const excludeId = searchParams.get("excludeId"); // al editar una cita, su propio hueco no cuenta
 
   if (!isValidDateStr(date) || !employeeId || !serviceId) {
     return Response.json({ error: "Parámetros no válidos" }, { status: 400 });
@@ -33,10 +34,10 @@ export async function GET(request) {
 
   const dayStart = localToUtc(date, "00:00").toISOString();
   const dayEnd = new Date(localToUtc(date, "00:00").getTime() + 86400000).toISOString();
-  const [{ data: busy, error: bErr }, hours] = await Promise.all([
+  const [{ data: busyRaw, error: bErr }, hours] = await Promise.all([
     db
       .from("appointments")
-      .select("starts_at,ends_at")
+      .select("id,starts_at,ends_at")
       .eq("employee_id", employeeId)
       .eq("status", "confirmed")
       .gte("ends_at", dayStart)
@@ -46,6 +47,7 @@ export async function GET(request) {
   if (bErr) {
     return Response.json({ error: "Error al consultar la agenda" }, { status: 500 });
   }
+  const busy = (busyRaw || []).filter((b) => b.id !== excludeId);
 
   // Horario propio del empleado (si lo tiene); si no, el general
   const effectiveHours = sanitizeHours(employeeRow.hours) ?? hours;

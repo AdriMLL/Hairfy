@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { t } from "@/lib/i18n";
 
 // Tienda de productos: elige cantidades y confirma el pedido.
 // Requiere la sesión del cliente (phone + code). Los pedidos se pagan al recoger.
@@ -58,7 +59,7 @@ export function Shop({ phone, code, onOrdered }) {
       const data = await res.json();
       if (!res.ok) setError(data.error || "No se pudo crear el pedido");
       else {
-        setNotice("¡Pedido realizado! Recógelo y págalo en la peluquería.");
+        setNotice(t("shop.ok"));
         setCart({});
         await loadProducts();
         onOrdered?.();
@@ -70,9 +71,9 @@ export function Shop({ phone, code, onOrdered }) {
     }
   }
 
-  if (products === null) return <p style={{ color: "var(--muted)" }}>Cargando productos…</p>;
+  if (products === null) return <p style={{ color: "var(--muted)" }}>{t("loading")}</p>;
   if (products.length === 0)
-    return <p style={{ color: "var(--muted)" }}>Ahora mismo no hay productos disponibles.</p>;
+    return <p style={{ color: "var(--muted)" }}>{t("shop.none")}</p>;
 
   return (
     <div>
@@ -90,7 +91,7 @@ export function Shop({ phone, code, onOrdered }) {
               <span className="meta">
                 <span className="price">{Number(p.price_eur).toFixed(2)} €</span>
                 {p.stock <= 3 && (
-                  <span style={{ color: "var(--danger)" }}> · ¡quedan {p.stock}!</span>
+                  <span style={{ color: "var(--danger)" }}> · {t("shop.left", { n: p.stock })}</span>
                 )}
               </span>
               <div className="qty-row">
@@ -116,11 +117,11 @@ export function Shop({ phone, code, onOrdered }) {
           <div className="summary">
             {items.map((it) => `${it.name} x${it.qty}`).join(" · ")}
             <br />
-            Total: <strong>{total.toFixed(2)} €</strong> · se paga al recoger en la peluquería
+            {t("shop.total")}: <strong>{total.toFixed(2)} €</strong> · {t("shop.payPickup")}
           </div>
           <div style={{ marginTop: 12 }}>
             <button onClick={sendOrder} disabled={loading}>
-              {loading ? "Enviando…" : "Confirmar pedido 🛍️"}
+              {loading ? t("shop.sending") : t("shop.confirm")}
             </button>
           </div>
         </>

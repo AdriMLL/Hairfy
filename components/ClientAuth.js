@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { saveSession } from "@/lib/session";
+import { t } from "@/lib/i18n";
 
 // Widget de identificación del cliente: entrar con código o crear ficha nueva.
 // Al terminar llama a onAuth({ name, phone, code }).
@@ -9,6 +10,7 @@ export function ClientAuth({ onAuth, intro }) {
   const [mode, setMode] = useState("login"); // login | register
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
+  const [email, setEmail] = useState("");
   const [code, setCode] = useState("");
   const [newCode, setNewCode] = useState(null);
   const [pendingSession, setPendingSession] = useState(null);
@@ -26,7 +28,7 @@ export function ClientAuth({ onAuth, intro }) {
         body: JSON.stringify(
           mode === "login"
             ? { action: "login", phone, code }
-            : { action: "register", name, phone }
+            : { action: "register", name, phone, email }
         ),
       });
       const data = await res.json();
@@ -53,13 +55,13 @@ export function ClientAuth({ onAuth, intro }) {
   if (newCode) {
     return (
       <div>
-        <p className="msg-ok">¡Ficha creada, {name}!</p>
+        <p className="msg-ok">{t("auth.created", { name })}</p>
         <div className="code-box">
-          <small>Tu código de cliente — guárdalo para entrar la próxima vez (podrás cambiarlo en "Mis citas")</small>
+          <small>{t("auth.keepCode")}</small>
           <span className="code">{newCode}</span>
         </div>
         <button className="block" onClick={() => onAuth(pendingSession)}>
-          Continuar →
+          {t("auth.continue")}
         </button>
       </div>
     );
@@ -74,34 +76,40 @@ export function ClientAuth({ onAuth, intro }) {
           className={`pill ${mode === "login" ? "selected" : ""}`}
           onClick={() => { setMode("login"); setError(""); }}
         >
-          Ya tengo código
+          {t("auth.haveCode")}
         </button>
         <button
           type="button"
           className={`pill ${mode === "register" ? "selected" : ""}`}
           onClick={() => { setMode("register"); setError(""); }}
         >
-          Soy nuevo
+          {t("auth.new")}
         </button>
       </div>
 
       {mode === "register" && (
         <>
-          <label>Tu nombre</label>
+          <label>{t("auth.name")}</label>
           <input value={name} onChange={(e) => setName(e.target.value)} required minLength={2} maxLength={80} autoComplete="name" placeholder="María García" />
         </>
       )}
-      <label>Tu teléfono</label>
+      <label>{t("auth.phone")}</label>
       <input type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} required minLength={9} maxLength={20} autoComplete="tel" placeholder="600 123 456" />
+      {mode === "register" && (
+        <>
+          <label>{t("auth.email")}</label>
+          <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} maxLength={120} autoComplete="email" placeholder="maria@email.com" />
+        </>
+      )}
       {mode === "login" && (
         <>
-          <label>Tu código de cliente</label>
+          <label>{t("auth.code")}</label>
           <input value={code} onChange={(e) => setCode(e.target.value)} required placeholder="FB-000000" style={{ textTransform: "uppercase", letterSpacing: "2px" }} />
         </>
       )}
       <div style={{ marginTop: 14 }}>
         <button type="submit" disabled={loading}>
-          {loading ? "Un momento…" : mode === "login" ? "Entrar" : "Crear mi ficha"}
+          {loading ? t("auth.wait") : mode === "login" ? t("auth.enter") : t("auth.create")}
         </button>
       </div>
       {error && <p className="msg-error">{error}</p>}

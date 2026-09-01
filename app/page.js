@@ -7,6 +7,7 @@ import { BookingFlow } from "@/components/BookingFlow";
 import { Shop } from "@/components/Shop";
 import { ClientAuth } from "@/components/ClientAuth";
 import { loadSession, clearSession } from "@/lib/session";
+import { t } from "@/lib/i18n";
 
 function PedidosTab() {
   const [session, setSession] = useState(null);
@@ -18,14 +19,14 @@ function PedidosTab() {
   }, []);
 
   if (!ready) {
-    return <div className="card"><p style={{ color: "var(--muted)" }}>Cargando…</p></div>;
+    return <div className="card"><p style={{ color: "var(--muted)" }}>{t("loading")}</p></div>;
   }
   if (!session) {
     return (
       <div className="card">
         <ClientAuth
           onAuth={setSession}
-          intro="Para hacer pedidos, identifícate: así quedan guardados a tu nombre y los recoges sin esperas."
+          intro={t("auth.introShop")}
         />
       </div>
     );
@@ -34,7 +35,7 @@ function PedidosTab() {
     <div className="card">
       <div className="topbar" style={{ marginBottom: 12 }}>
         <p style={{ margin: 0, color: "var(--muted)" }}>
-          Pidiendo como{" "}
+          {t("shop.orderingAs")}{" "}
           <strong style={{ color: "var(--gold-strong)" }}>{session.name}</strong>
         </p>
         <button
@@ -44,13 +45,12 @@ function PedidosTab() {
             setSession(null);
           }}
         >
-          No soy yo
+          {t("book.notme")}
         </button>
       </div>
       <Shop phone={session.phone} code={session.code} />
       <p style={{ color: "var(--muted)", fontSize: "0.85rem", marginTop: 16 }}>
-        Los pedidos se recogen y pagan en la peluquería. Puedes verlos o
-        cancelarlos en{" "}
+        {t("shop.info")} {t("shop.manage")}{" "}
         <a href="/mis-citas" style={{ color: "var(--gold-strong)" }}>Mis citas</a>.
       </p>
     </div>
@@ -60,8 +60,10 @@ function PedidosTab() {
 export default function HomePage() {
   const [meta, setMeta] = useState(null);
   const [tab, setTab] = useState("reservar"); // reservar | pedidos | nosotros
+  const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
+    setMounted(true);
     const params = new URLSearchParams(window.location.search);
     const t = params.get("tab");
     if (["reservar", "pedidos", "nosotros"].includes(t)) setTab(t);
@@ -71,6 +73,8 @@ export default function HomePage() {
       .catch(() => {});
   }, []);
 
+  if (!mounted) return null;
+
   return (
     <>
       <SiteHeader active="inicio" />
@@ -78,7 +82,7 @@ export default function HomePage() {
         <h1>
           Fennani <em>Barbershop</em>
         </h1>
-        <p>Tu barbería en Leganés · Corte, barba y buen trato</p>
+        <p>{t("hero.tagline")}</p>
         {meta?.business && (
           <a
             className="rating-badge"
@@ -86,12 +90,12 @@ export default function HomePage() {
             target="_blank"
             rel="noopener noreferrer"
           >
-            ★ {meta.business.googleRating.toFixed(1)} en Google ·{" "}
-            {meta.business.googleReviewCount} reseñas
+            ★ {meta.business.googleRating.toFixed(1)}{" "}
+            {t("hero.google", { n: meta.business.googleReviewCount })}
           </a>
         )}
         <p style={{ color: "var(--muted)", marginTop: 14, fontSize: "0.9rem" }}>
-          🕤 Abierto de 9:30 a 21:00 · Martes cerrado · 📞{" "}
+          🕤 {t("hero.open")} · 📞{" "}
           <a href="tel:+34627556151" style={{ color: "var(--gold-strong)" }}>627 55 61 51</a>
         </p>
       </div>
@@ -103,7 +107,7 @@ export default function HomePage() {
             className={`home-tab ${tab === "reservar" ? "active" : ""}`}
             onClick={() => setTab("reservar")}
           >
-            📅 Reservar cita
+            {t("tab.book")}
           </button>
           <button
             role="tab"
@@ -111,7 +115,7 @@ export default function HomePage() {
             className={`home-tab ${tab === "pedidos" ? "active" : ""}`}
             onClick={() => setTab("pedidos")}
           >
-            🛍️ Pedidos
+            {t("tab.orders")}
           </button>
           <button
             role="tab"
@@ -119,7 +123,7 @@ export default function HomePage() {
             className={`home-tab ${tab === "nosotros" ? "active" : ""}`}
             onClick={() => setTab("nosotros")}
           >
-            💈 Nosotros
+            {t("tab.about")}
           </button>
         </div>
 
@@ -129,7 +133,7 @@ export default function HomePage() {
           (meta?.business ? (
             <LandingSections meta={meta} />
           ) : (
-            <div className="card"><p style={{ color: "var(--muted)" }}>Cargando…</p></div>
+            <div className="card"><p style={{ color: "var(--muted)" }}>{t("loading")}</p></div>
           ))}
       </main>
       <SiteFooter />
