@@ -2,6 +2,7 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { generateAccessCode, normalizeCode, normalizePhone, validateCustomCode } from "@/lib/code";
 import { authBlocked, authFail, authOk, overActionLimit, clientIp, tooManyResponse } from "@/lib/rateLimit";
 import { safeEqual } from "@/lib/security";
+import { sendCodeRecovery } from "@/lib/email";
 import { logActivity } from "@/lib/audit";
 
 export const dynamic = "force-dynamic";
@@ -99,6 +100,9 @@ export async function POST(request) {
           access_code: candidate,
           email,
           accepted_terms_at: new Date().toISOString(),
+          // Consentimiento de promos: opcional y solo tiene sentido con email
+          marketing_consent_at:
+            body?.marketingConsent === true && email ? new Date().toISOString() : null,
         })
         .select("id")
         .single();
@@ -109,6 +113,25 @@ export async function POST(request) {
     }
     await logActivity("cliente", "ficha_creada", { cliente: name, telefono: phone, via: "web" });
     return Response.json({ ok: true, name, accessCode, email });
+  }
+
+  if (body?.action === "recover-code") {
+    // "He olvidado mi código": si la ficha tiene email, se lo reenviamos.
+    // La respuesta es SIEMPRE la misma (exista o no la ficha) para no
+    // permitir averiguar qué teléfonos están registrados.
+    if (await overActionLimit(db, `rec:${clientIp(request)}|${phone}`, 3, 60 * 60 * 1000)) {
+      return tooManyResponse();
+    }
+    const { data: client } = await db
+      .from("clients")
+      .select("name,access_code,email")
+      .eq("phone", phone)
+      .maybeSingle();
+    if (client?.email && client?.access_code) {
+      await sendCodeRecovery(client.email, { name: client.name, code: client.access_code });
+      await logActivity("sistema", "codigo_reenviado", { cliente: client.name });
+    }
+    return Response.json({ ok: true });
   }
 
   if (body?.action === "change-email") {

@@ -240,7 +240,12 @@ function Dashboard({ session }) {
             {tab === "clients" && <Clients api={api} />}
             {tab === "gallery" && <Gallery api={api} />}
             {tab === "reviews" && <Reviews api={api} />}
-            {tab === "horario" && <Horario api={api} />}
+            {tab === "horario" && (
+              <>
+                <Horario api={api} />
+                <Cierres api={api} />
+              </>
+            )}
           </div>
         </div>
       </main>
@@ -383,7 +388,7 @@ function Agenda({ api }) {
         ) : (
           <div className="day-timeline">
             {appts.map((a) => (
-              <div key={a.id} className={`appt-card ${a.status === "cancelled" ? "is-cancelled" : ""}`}>
+              <div key={a.id} className={`appt-card ${a.status !== "confirmed" ? "is-cancelled" : ""}`}>
                 <div className="appt-time">
                   <strong>{fmtTimeMadrid(a.starts_at)}</strong>
                   <span>{fmtTimeMadrid(a.ends_at)}</span>
@@ -392,6 +397,7 @@ function Agenda({ api }) {
                   <div className="appt-line1">
                     <strong>{a.clients?.name}</strong>
                     {a.status === "cancelled" && <span className="badge cancelled">Cancelada</span>}
+                    {a.status === "no_show" && <span className="badge noshow">No vino</span>}
                   </div>
                   <div className="appt-line2">
                     ✂️ {a.services?.name} · {Number(a.services?.price_eur || 0).toFixed(2)} € ·{" "}
@@ -422,6 +428,15 @@ function Agenda({ api }) {
                       <button className="danger small" onClick={() => setStatus(a.id, "cancelled")}>
                         Cancelar
                       </button>
+                      {new Date(a.starts_at) < new Date() && (
+                        <button
+                          className="secondary small"
+                          title="El cliente no se presentó"
+                          onClick={() => setStatus(a.id, "no_show")}
+                        >
+                          👻 No vino
+                        </button>
+                      )}
                     </>
                   ) : (
                     <button className="secondary small" onClick={() => setStatus(a.id, "confirmed")}>
@@ -1263,6 +1278,10 @@ function Stats({ api }) {
             <div className="stat-num">{t.cancelled}</div>
             <div className="stat-label">citas canceladas</div>
           </div>
+          <div className="stat-box">
+            <div className="stat-num">{t.noShows ?? 0}</div>
+            <div className="stat-label">no asistieron (no-show)</div>
+          </div>
         </div>
       </div>
 
@@ -1688,6 +1707,125 @@ function formToHours(form) {
     out[d] = ranges.length ? ranges : null;
   }
   return out;
+}
+
+// ---------- Festivos y vacaciones (cierres) ----------
+
+function Cierres({ api }) {
+  const { data, error, setError, reload } = useList(api, "closures");
+  const [employees, setEmployees] = useState([]);
+  const [startsOn, setStartsOn] = useState(todayStr());
+  const [endsOn, setEndsOn] = useState(todayStr());
+  const [reason, setReason] = useState("");
+  const [who, setWho] = useState("");
+  const [ok, setOk] = useState("");
+
+  useEffect(() => {
+    api("employees")
+      .then((e) => setEmployees((e.data || []).filter((emp) => emp.active)))
+      .catch(() => {});
+  }, [api]);
+
+  async function add(e) {
+    e.preventDefault();
+    setError("");
+    setOk("");
+    try {
+      await api("closures", {
+        method: "POST",
+        body: JSON.stringify({
+          startsOn,
+          endsOn: endsOn < startsOn ? startsOn : endsOn,
+          reason,
+          employeeId: who || undefined,
+        }),
+      });
+      setReason("");
+      setOk("Cierre guardado: esos días ya no aceptan reservas.");
+      reload();
+    } catch (e2) {
+      setError(e2.message);
+    }
+  }
+
+  async function remove(c) {
+    if (!window.confirm("¿Quitar este cierre? Los días volverán a aceptar reservas.")) return;
+    try {
+      await api(`closures?id=${c.id}`, { method: "DELETE" });
+      reload();
+    } catch (e2) {
+      setError(e2.message);
+    }
+  }
+
+  const fmtDay = (d) =>
+    new Date(`${d}T12:00:00Z`).toLocaleDateString("es-ES", {
+      day: "numeric", month: "short", year: "numeric", timeZone: "UTC",
+    });
+
+  return (
+    <div className="card" style={{ marginTop: 18 }}>
+      <h2>Festivos y vacaciones</h2>
+      <p style={{ color: "var(--muted)", marginTop: 0, fontSize: "0.9rem" }}>
+        Cierra días sueltos o periodos (festivos, vacaciones…). Los clientes no
+        podrán reservar en esos días — de todo el local o solo de un empleado.
+      </p>
+      <form className="row" onSubmit={add}>
+        <div>
+          <label>Desde</label>
+          <input type="date" value={startsOn} onChange={(e) => setStartsOn(e.target.value)} required />
+        </div>
+        <div>
+          <label>Hasta (incluido)</label>
+          <input type="date" value={endsOn} min={startsOn} onChange={(e) => setEndsOn(e.target.value)} required />
+        </div>
+        <div>
+          <label>Motivo (opcional)</label>
+          <input value={reason} maxLength={120} placeholder="Vacaciones, festivo…" onChange={(e) => setReason(e.target.value)} />
+        </div>
+        <div>
+          <label>Afecta a</label>
+          <select value={who} onChange={(e) => setWho(e.target.value)}>
+            <option value="">🏠 Todo el local</option>
+            {employees.map((emp) => (
+              <option key={emp.id} value={emp.id}>Solo {emp.name}</option>
+            ))}
+          </select>
+        </div>
+        <div style={{ flex: "0 0 auto" }}>
+          <label style={{ visibility: "hidden" }}>.</label>
+          <button type="submit">Cerrar días</button>
+        </div>
+      </form>
+      {ok && <p className="msg-ok">{ok}</p>}
+      {error && <p className="msg-error">{error}</p>}
+      {data && data.length > 0 && (
+        <div className="table-scroll">
+          <table>
+            <thead>
+              <tr><th>Desde</th><th>Hasta</th><th>Motivo</th><th>Afecta a</th><th></th></tr>
+            </thead>
+            <tbody>
+              {data.map((c) => (
+                <tr key={c.id}>
+                  <td>{fmtDay(c.starts_on)}</td>
+                  <td>{fmtDay(c.ends_on)}</td>
+                  <td>{c.reason || "—"}</td>
+                  <td>{c.employees?.name ? `Solo ${c.employees.name}` : "Todo el local"}</td>
+                  <td>
+                    <button className="danger small" onClick={() => remove(c)}>Quitar</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {data && data.length === 0 && (
+        <p style={{ color: "var(--muted)" }}>No hay cierres programados.</p>
+      )}
+    </div>
+  );
 }
 
 function Horario({ api }) {

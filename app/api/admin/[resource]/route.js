@@ -5,6 +5,7 @@ import { getBusinessHours, sanitizeHours } from "@/lib/hours";
 import { generateAccessCode, normalizePhone } from "@/lib/code";
 import { logActivity } from "@/lib/audit";
 import { sendBookingConfirmation, sendBookingUpdate } from "@/lib/email";
+import { getClosure, closureMessage } from "@/lib/closures";
 
 export const dynamic = "force-dynamic";
 
@@ -130,6 +131,19 @@ export async function GET(request, { params }) {
     return Response.json({ data });
   }
 
+  if (resource === "closures") {
+    // Festivos y vacaciones: cierres desde hace 30 días en adelante
+    const since = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
+    const { data, error } = await db
+      .from("closures")
+      .select("id,starts_on,ends_on,reason,employee_id,employees(name)")
+      .gte("ends_on", since)
+      .order("starts_on")
+      .limit(200);
+    if (error) return Response.json({ error: "Error al cargar los cierres" }, { status: 500 });
+    return Response.json({ data });
+  }
+
   if (resource === "settings") {
     const { data } = await db
       .from("settings")
@@ -204,7 +218,8 @@ export async function GET(request, { params }) {
 
     const all = appts.data || [];
     const confirmed = all.filter((a) => a.status === "confirmed");
-    const cancelled = all.length - confirmed.length;
+    const cancelled = all.filter((a) => a.status === "cancelled").length;
+    const noShows = all.filter((a) => a.status === "no_show").length;
 
     const weekKey = (iso) => {
       const d = new Date(iso);
@@ -270,6 +285,7 @@ export async function GET(request, { params }) {
         totals: {
           appointments: confirmed.length,
           cancelled,
+          noShows,
           serviceRevenue,
           productRevenue,
           orders: orderCount,
@@ -346,6 +362,15 @@ export async function POST(request, { params }) {
       return Response.json({ error: "Servicio o empleado no válido" }, { status: 400 });
     }
     const hours = sanitizeHours(employee.hours) ?? generalHours;
+
+    // Día cerrado (festivo/vacaciones): avisamos también al personal
+    const closure = await getClosure(db2, date, employeeId);
+    if (closure) {
+      return Response.json(
+        { error: `${closureMessage(closure)} (Puedes borrar el cierre en Horario → Festivos.)` },
+        { status: 409 }
+      );
+    }
 
     const dayStart = localToUtc(date, "00:00").toISOString();
     const dayEnd = new Date(localToUtc(date, "00:00").getTime() + 86400000).toISOString();
@@ -431,11 +456,46 @@ export async function POST(request, { params }) {
         service: service.name,
         employee: employee.name,
         startsAt: slot.startsAt,
+        endsAt: slot.endsAt,
+        appointmentId: appt.id,
         price: service.price_eur,
       });
     }
 
     return Response.json({ ok: true, appointmentId: appt.id, accessCode });
+  }
+
+  if (resource === "closures") {
+    // Nuevo cierre: { startsOn, endsOn, reason?, employeeId? }
+    let body;
+    try {
+      body = await request.json();
+    } catch {
+      return Response.json({ error: "Petición no válida" }, { status: 400 });
+    }
+    const { startsOn, endsOn } = body || {};
+    if (!isValidDateStr(startsOn) || !isValidDateStr(endsOn) || endsOn < startsOn) {
+      return Response.json({ error: "Fechas no válidas (inicio ≤ fin)" }, { status: 400 });
+    }
+    const reason = typeof body?.reason === "string" ? body.reason.trim().slice(0, 120) || null : null;
+    let employeeId = null;
+    if (body?.employeeId) {
+      const { data: emp } = await supabaseAdmin()
+        .from("employees")
+        .select("id")
+        .eq("id", body.employeeId)
+        .maybeSingle();
+      if (!emp) return Response.json({ error: "Empleado no válido" }, { status: 400 });
+      employeeId = emp.id;
+    }
+    const { data, error } = await supabaseAdmin()
+      .from("closures")
+      .insert({ starts_on: startsOn, ends_on: endsOn, reason, employee_id: employeeId })
+      .select("id,starts_on,ends_on,reason,employee_id,employees(name)")
+      .single();
+    if (error) return Response.json({ error: "No se pudo guardar el cierre" }, { status: 500 });
+    await logActivity("admin", "cierre_creado", { desde: startsOn, hasta: endsOn, motivo: reason });
+    return Response.json({ data });
   }
 
   if (resource === "product-image") {
@@ -673,6 +733,11 @@ export async function PATCH(request, { params }) {
     }
     const hours = sanitizeHours(employee.hours) ?? generalHours;
 
+    const closure2 = await getClosure(db, date, employeeId);
+    if (closure2) {
+      return Response.json({ error: closureMessage(closure2) }, { status: 409 });
+    }
+
     const dayStart = localToUtc(date, "00:00").toISOString();
     const dayEnd = new Date(localToUtc(date, "00:00").getTime() + 86400000).toISOString();
     const { data: busy } = await db
@@ -733,17 +798,25 @@ export async function PATCH(request, { params }) {
   }
 
   if (resource === "appointments") {
-    // Solo se permite cambiar el estado (cancelar / reactivar)
+    // Cambios de estado: cancelar / reactivar / marcar "no vino"
     const status = body?.status;
-    if (!["confirmed", "cancelled"].includes(status)) {
+    if (!["confirmed", "cancelled", "no_show"].includes(status)) {
       return Response.json({ error: "Estado no válido" }, { status: 400 });
     }
     const { data: current } = await db
       .from("appointments")
-      .select("status")
+      .select("status,starts_at")
       .eq("id", id)
       .maybeSingle();
     if (!current) return Response.json({ error: "Cita no encontrada" }, { status: 404 });
+    if (status === "no_show") {
+      if (current.status !== "confirmed") {
+        return Response.json({ error: "Solo se puede marcar como no asistida una cita confirmada" }, { status: 400 });
+      }
+      if (new Date(current.starts_at) > new Date()) {
+        return Response.json({ error: "La cita aún no ha pasado" }, { status: 400 });
+      }
+    }
 
     const { error } = await db.from("appointments").update({ status }).eq("id", id);
     if (error) {
@@ -756,12 +829,12 @@ export async function PATCH(request, { params }) {
       return Response.json({ error: "No se pudo actualizar" }, { status: 400 });
     }
     // Mantener el stock de productos en orden
-    if (current.status === "confirmed" && status === "cancelled") {
+    if (current.status === "confirmed" && (status === "cancelled" || status === "no_show")) {
       await restockAppointment(db, id);
-    } else if (current.status === "cancelled" && status === "confirmed") {
+    } else if (current.status !== "confirmed" && status === "confirmed") {
       await reReserveAppointment(db, id);
     }
-    await logActivity("admin", status === "cancelled" ? "cita_cancelada" : "cita_reactivada", {
+    await logActivity("admin", status === "cancelled" ? "cita_cancelada" : status === "no_show" ? "cita_no_asistida" : "cita_reactivada", {
       cita: id,
       via: "admin",
     });
@@ -783,7 +856,7 @@ export async function DELETE(request, { params }) {
   const user = await requireAdmin(request);
   if (!user) return unauthorized();
   const { resource } = params;
-  const DELETABLE = ["gallery", "reviews", "appointments", "clients", "employees", "services", "products"];
+  const DELETABLE = ["gallery", "reviews", "appointments", "clients", "employees", "services", "products", "closures"];
   if (!DELETABLE.includes(resource)) {
     return Response.json({ error: "Operación no permitida" }, { status: 405 });
   }

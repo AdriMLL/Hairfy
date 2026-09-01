@@ -1,8 +1,9 @@
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { normalizeCode, normalizePhone } from "@/lib/code";
 import { authBlocked, authFail, authOk, overActionLimit, clientIp, tooManyResponse } from "@/lib/rateLimit";
-import { safeEqual } from "@/lib/security";
+import { safeEqual, escapeHtml } from "@/lib/security";
 import { logActivity } from "@/lib/audit";
+import { sendStaffNotification } from "@/lib/email";
 
 export const dynamic = "force-dynamic";
 
@@ -114,7 +115,7 @@ export async function POST(request) {
       return Response.json({ error: "No se pudo reservar el producto" }, { status: 500 });
     }
     reserved.push(it);
-    rows.push({ product_id: prod.id, quantity: it.quantity, price_eur: prod.price_eur });
+    rows.push({ product_id: prod.id, quantity: it.quantity, price_eur: prod.price_eur, name: prod.name });
   }
 
   const { data: order, error: oErr } = await db
@@ -129,7 +130,7 @@ export async function POST(request) {
 
   const { error: iErr } = await db
     .from("order_items")
-    .insert(rows.map((r) => ({ ...r, order_id: order.id })));
+    .insert(rows.map(({ name: _n, ...r }) => ({ ...r, order_id: order.id })));
   if (iErr) {
     await restock(db, reserved);
     await db.from("orders").delete().eq("id", order.id);
@@ -141,6 +142,16 @@ export async function POST(request) {
     articulos: rows.reduce((acc, r) => acc + r.quantity, 0),
     total: rows.reduce((acc, r) => acc + Number(r.price_eur) * r.quantity, 0),
   });
+
+  // Aviso interno al buzón del negocio
+  const totalPedido = rows.reduce((acc, r) => acc + Number(r.price_eur) * r.quantity, 0);
+  await sendStaffNotification(
+    `🛍️ Nuevo pedido — ${totalPedido.toFixed(2)} €`,
+    "Nuevo pedido desde la web",
+    `<p style="margin:0 0 8px;"><strong>${escapeHtml(client.name)}</strong></p>
+     <p style="margin:0;">${rows.map((r) => escapeHtml(`${r.name} x${r.quantity} — ${(Number(r.price_eur) * r.quantity).toFixed(2)} €`)).join("<br/>")}</p>
+     <p style="margin:8px 0 0;">Total: <strong>${totalPedido.toFixed(2)} €</strong> · Se paga al recoger.</p>`
+  );
 
   return Response.json({ ok: true, orderId: order.id });
 }

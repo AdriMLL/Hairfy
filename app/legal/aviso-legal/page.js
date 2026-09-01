@@ -1,14 +1,21 @@
 "use client";
 
 import { LegalPage } from "../LegalPage";
+import { BUSINESS } from "@/lib/config";
 
 export default function AvisoLegalPage() {
   return (
     <LegalPage title="Aviso legal y propiedad intelectual" updated="septiembre de 2026">
       <h2>1. Titular del sitio</h2>
       <p>
-        Este sitio web es titularidad de <strong>Peluquería Caballero Fennani Barbershop</strong>,
-        con establecimiento en C. Pedro de Valdivia 3, 28911 Leganés (Madrid). Contacto:{" "}
+        Este sitio web es titularidad de <strong>Peluquería Caballero Fennani Barbershop</strong>
+        {BUSINESS.legalOwner?.name && BUSINESS.legalOwner?.nif && (
+          <>
+            , cuyo titular es <strong>{BUSINESS.legalOwner.name}</strong> (NIF{" "}
+            {BUSINESS.legalOwner.nif})
+          </>
+        )}
+        , con establecimiento en C. Pedro de Valdivia 3, 28911 Leganés (Madrid). Contacto:{" "}
         <a href="mailto:fennanibarbershop@gmail.com">fennanibarbershop@gmail.com</a> · 627 55 61 51.
       </p>
 

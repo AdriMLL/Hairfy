@@ -5,6 +5,35 @@ import { ClientAuth } from "@/components/ClientAuth";
 import { loadSession, saveSession, clearSession } from "@/lib/session";
 import { t, locale } from "@/lib/i18n";
 
+// Descarga un evento .ics para el calendario del cliente
+function downloadIcs(done) {
+  const fmt = (d) => new Date(d).toISOString().replace(/[-:]/g, "").replace(/\.\d{3}/, "");
+  const start = new Date(done.startsAt);
+  const end = new Date(start.getTime() + (done.durationMin || 30) * 60000);
+  const esc = (x) => String(x ?? "").replace(/[\\;,]/g, (c) => "\\" + c);
+  const ics = [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "PRODID:-//Fennani Barbershop//Citas//ES",
+    "BEGIN:VEVENT",
+    `UID:${start.getTime()}@fennanibarbershop`,
+    `DTSTAMP:${fmt(new Date())}`,
+    `DTSTART:${fmt(start)}`,
+    `DTEND:${fmt(end)}`,
+    `SUMMARY:${esc(`✂️ ${done.service || "Cita"} — Fennani Barbershop`)}`,
+    `LOCATION:${esc("Fennani Barbershop, C. Pedro de Valdivia 3, Leganés")}`,
+    "END:VEVENT",
+    "END:VCALENDAR",
+  ].join("\r\n");
+  const blob = new Blob([ics], { type: "text/calendar;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = "cita-fennani.ics";
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
+
 // Flujo completo de reserva: identificarse -> servicio -> día/hora -> confirmar.
 // Se muestra dentro de la pestaña "Reservar cita" del Inicio.
 export function BookingFlow({ meta }) {
@@ -12,6 +41,7 @@ export function BookingFlow({ meta }) {
   const [employee, setEmployee] = useState(null);
   const [date, setDate] = useState("");
   const [slots, setSlots] = useState(null);
+  const [closedReason, setClosedReason] = useState(null);
   const [slot, setSlot] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -53,9 +83,13 @@ export function BookingFlow({ meta }) {
       employeeId: employee.id,
       serviceId: service.id,
     });
+    setClosedReason(null);
     fetch(`/api/availability?${params}`)
       .then((r) => r.json())
-      .then((d) => setSlots(d.slots ?? []))
+      .then((d) => {
+        setSlots(d.slots ?? []);
+        if (d.closed) setClosedReason(d.reason || "");
+      })
       .catch(() => setError("No se pudo consultar la disponibilidad"));
   }, [service, employee, date]);
 
@@ -100,7 +134,12 @@ export function BookingFlow({ meta }) {
           saveSession({ ...session, code: data.accessCode });
           setSession({ ...session, code: data.accessCode });
         }
-        setDone({ startsAt: data.startsAt });
+        setDone({
+          startsAt: data.startsAt,
+          service: service?.name,
+          durationMin: service?.duration_min,
+          employee: employee?.name,
+        });
       }
     } catch {
       setError("Error de conexión. Inténtalo de nuevo.");
@@ -131,6 +170,9 @@ export function BookingFlow({ meta }) {
           </div>
         )}
         <div style={{ display: "flex", gap: 10, justifyContent: "center", flexWrap: "wrap" }}>
+          <button className="secondary" onClick={() => downloadIcs(done)}>
+            {t("book.addCal")}
+          </button>
           <a href="/mis-citas">
             <button className="secondary">{t("book.seeMine")}</button>
           </a>
@@ -236,6 +278,7 @@ export function BookingFlow({ meta }) {
               {slots.length === 0 ? (
                 <p style={{ color: "var(--muted)" }}>
                   {t("book.closed")}
+                  {closedReason ? ` (${closedReason})` : ""}
                 </p>
               ) : (
                 <>

@@ -1061,3 +1061,20 @@ th { color: var(--muted); font-weight: 600; text-transform: uppercase; font-size
   }
   .mg-cell { aspect-ratio: auto; min-height: 52px; }
 }
+
+/* ---- v17: enlaces tipo texto y badge de no-show ---- */
+.linklike {
+  background: none;
+  border: none;
+  padding: 4px 0 0;
+  color: var(--gold-strong);
+  text-decoration: underline;
+  cursor: pointer;
+  font-size: 0.85rem;
+  font-weight: 500;
+}
+.linklike:hover { color: var(--gold); }
+.badge.noshow {
+  background: var(--danger-bg);
+  color: var(--danger);
+}

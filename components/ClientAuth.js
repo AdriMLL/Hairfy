@@ -13,6 +13,8 @@ export function ClientAuth({ onAuth, intro }) {
   const [email, setEmail] = useState("");
   const [code, setCode] = useState("");
   const [accept, setAccept] = useState(false);
+  const [marketing, setMarketing] = useState(false);
+  const [recovered, setRecovered] = useState(false);
   const [website, setWebsite] = useState(""); // honeypot: los humanos no lo ven
   const [newCode, setNewCode] = useState(null);
   const [pendingSession, setPendingSession] = useState(null);
@@ -30,12 +32,24 @@ export function ClientAuth({ onAuth, intro }) {
         body: JSON.stringify(
           mode === "login"
             ? { action: "login", phone, code }
-            : { action: "register", name, phone, email, acceptTerms: accept, website }
+            : mode === "recover"
+            ? { action: "recover-code", phone }
+            : {
+                action: "register",
+                name,
+                phone,
+                email,
+                acceptTerms: accept,
+                marketingConsent: marketing,
+                website,
+              }
         ),
       });
       const data = await res.json();
       if (!res.ok) {
         setError(data.error || "No se pudo completar");
+      } else if (mode === "recover") {
+        setRecovered(true);
       } else if (mode === "login") {
         const session = { name: data.name, phone, code };
         saveSession(session);
@@ -66,6 +80,36 @@ export function ClientAuth({ onAuth, intro }) {
           {t("auth.continue")}
         </button>
       </div>
+    );
+  }
+
+  if (mode === "recover") {
+    return (
+      <form onSubmit={submit}>
+        <p style={{ color: "var(--muted)", marginTop: 0 }}>{t("auth.recoverIntro")}</p>
+        {recovered ? (
+          <p className="msg-ok">{t("auth.recoverSent")}</p>
+        ) : (
+          <>
+            <label>{t("auth.phone")}</label>
+            <input type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} required minLength={9} maxLength={20} autoComplete="tel" placeholder="600 123 456" />
+            <div style={{ marginTop: 14 }}>
+              <button type="submit" disabled={loading}>
+                {loading ? t("auth.wait") : t("auth.recoverSend")}
+              </button>
+            </div>
+          </>
+        )}
+        <button
+          type="button"
+          className="secondary small"
+          style={{ marginTop: 12 }}
+          onClick={() => { setMode("login"); setRecovered(false); setError(""); }}
+        >
+          {t("auth.back")}
+        </button>
+        {error && <p className="msg-error">{error}</p>}
+      </form>
     );
   }
 
@@ -107,6 +151,13 @@ export function ClientAuth({ onAuth, intro }) {
         <>
           <label>{t("auth.code")}</label>
           <input value={code} onChange={(e) => setCode(e.target.value)} required placeholder="FB-000000" style={{ textTransform: "uppercase", letterSpacing: "2px" }} />
+          <button
+            type="button"
+            className="linklike"
+            onClick={() => { setMode("recover"); setError(""); }}
+          >
+            {t("auth.forgot")}
+          </button>
         </>
       )}
       {mode === "register" && (
@@ -142,6 +193,16 @@ export function ClientAuth({ onAuth, intro }) {
               </a>
             </span>
           </label>
+          {email && (
+            <label className="consent-row" style={{ marginTop: 8 }}>
+              <input
+                type="checkbox"
+                checked={marketing}
+                onChange={(e) => setMarketing(e.target.checked)}
+              />
+              <span>{t("auth.marketing")}</span>
+            </label>
+          )}
         </>
       )}
       <div style={{ marginTop: 14 }}>

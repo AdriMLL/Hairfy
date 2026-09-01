@@ -3,12 +3,13 @@ import { buildSlots, isValidDateStr, isBookableDate, localToUtc } from "@/lib/av
 import { getBusinessHours, sanitizeHours } from "@/lib/hours";
 import { generateAccessCode, normalizeCode, normalizePhone } from "@/lib/code";
 import { authBlocked, authFail, authOk, overActionLimit, clientIp, tooManyResponse } from "@/lib/rateLimit";
-import { safeEqual } from "@/lib/security";
+import { safeEqual, escapeHtml } from "@/lib/security";
 import { logActivity } from "@/lib/audit";
 
 // Máximo de citas futuras confirmadas por cliente (anti-abuso)
 const MAX_ACTIVE_APPOINTMENTS = 3;
-import { sendBookingConfirmation } from "@/lib/email";
+import { sendBookingConfirmation, sendStaffNotification } from "@/lib/email";
+import { getClosure, closureMessage } from "@/lib/closures";
 
 export const dynamic = "force-dynamic";
 
@@ -94,6 +95,12 @@ export async function POST(request) {
   }
   // Horario propio del empleado (si lo tiene); si no, el general
   const hours = sanitizeHours(employee.hours) ?? generalHours;
+
+  // Festivos / vacaciones: día cerrado = no se puede reservar
+  const closure = await getClosure(db, date, employeeId);
+  if (closure) {
+    return Response.json({ error: closureMessage(closure) }, { status: 409 });
+  }
 
   // Recalcular la disponibilidad en el servidor: el hueco pedido debe estar libre
   const dayStart = localToUtc(date, "00:00").toISOString();
@@ -252,16 +259,27 @@ export async function POST(request) {
     via: "web",
   });
 
-  // Email de confirmación (si el cliente tiene email configurado)
+  // Email de confirmación (si el cliente tiene email configurado), con .ics
   if (existing?.email) {
     await sendBookingConfirmation(existing.email, {
       name,
       service: service.name,
       employee: employee.name,
       startsAt: appt.starts_at,
+      endsAt: slot.endsAt,
+      appointmentId: appt.id,
       price: service.price_eur,
     });
   }
+
+  // Aviso interno al buzón del negocio
+  await sendStaffNotification(
+    `📅 Nueva reserva — ${new Date(appt.starts_at).toLocaleString("es-ES", { timeZone: "Europe/Madrid", weekday: "short", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}`,
+    "Nueva reserva desde la web",
+    `<p style="margin:0 0 8px;"><strong>${escapeHtml(name)}</strong> (${escapeHtml(phone)})</p>
+     <p style="margin:0 0 8px;">${escapeHtml(service.name)} con ${escapeHtml(employee.name)} · ${Number(service.price_eur).toFixed(2)} €</p>
+     ${productNames.length ? `<p style="margin:0;">🧴 ${escapeHtml(productNames.join(", "))}</p>` : ""}`
+  );
 
   return Response.json({
     ok: true,

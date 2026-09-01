@@ -1,6 +1,7 @@
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { buildSlots, isValidDateStr, isBookableDate, localToUtc } from "@/lib/availability";
 import { getBusinessHours, sanitizeHours } from "@/lib/hours";
+import { getClosure } from "@/lib/closures";
 
 export const dynamic = "force-dynamic";
 
@@ -30,6 +31,12 @@ export async function GET(request) {
   }
   if (!employeeRow) {
     return Response.json({ error: "Profesional no encontrado" }, { status: 404 });
+  }
+
+  // Festivos / vacaciones: día cerrado = sin huecos
+  const closure = await getClosure(db, date, employeeId);
+  if (closure) {
+    return Response.json({ slots: [], closed: true, reason: closure.reason || null });
   }
 
   const dayStart = localToUtc(date, "00:00").toISOString();

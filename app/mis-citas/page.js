@@ -414,7 +414,7 @@ export default function MisCitasPage() {
                   </div>
                 )}
                 {history.map((a) => (
-                  <div key={a.id} className={`appt ${a.status === "cancelled" ? "cancelled" : ""}`}>
+                  <div key={a.id} className={`appt ${a.status !== "confirmed" ? "cancelled" : ""}`}>
                     <div className="appt-info">
                       <div className="when">
                         {new Date(a.startsAt).toLocaleDateString(locale(), {
@@ -430,6 +430,8 @@ export default function MisCitasPage() {
                     <div className="appt-actions">
                       {a.status === "cancelled" ? (
                         <span className="badge cancelled">{t("my.cancelled")}</span>
+                      ) : a.status === "no_show" ? (
+                        <span className="badge cancelled">{t("my.noShow")}</span>
                       ) : a.reviewed ? (
                         <span className="badge">★ {a.myRating}/5</span>
                       ) : a.reviewable && reviewFor !== a.id ? (
