@@ -1,6 +1,7 @@
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { normalizeCode, normalizePhone } from "@/lib/code";
-import { isBlocked, recordFail, clearFails, clientKey, tooManyResponse } from "@/lib/rateLimit";
+import { authBlocked, authFail, authOk, tooManyResponse } from "@/lib/rateLimit";
+import { safeEqual } from "@/lib/security";
 import { logActivity } from "@/lib/audit";
 
 export const dynamic = "force-dynamic";
@@ -29,19 +30,18 @@ export async function POST(request) {
     return Response.json({ error: "La puntuación debe ser de 1 a 5" }, { status: 400 });
   }
 
-  const key = clientKey(request, phone);
-  if (isBlocked(key)) return tooManyResponse();
   const db = supabaseAdmin();
+  if (await authBlocked(db, request, phone)) return tooManyResponse();
   const { data: client } = await db
     .from("clients")
     .select("id,name,access_code")
     .eq("phone", phone)
     .maybeSingle();
-  if (!client || !client.access_code || client.access_code !== code) {
-    recordFail(key);
+  if (!client || !safeEqual(client.access_code, code)) {
+    await authFail(db, request, phone);
     return Response.json({ error: "Teléfono o código incorrectos" }, { status: 401 });
   }
-  clearFails(key);
+  await authOk(db, request, phone);
 
   const { data: appt } = await db
     .from("appointments")

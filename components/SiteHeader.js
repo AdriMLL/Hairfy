@@ -54,6 +54,13 @@ export function SiteFooter() {
         </a>
       </p>
       <p style={{ marginTop: 6 }}>{ready ? t("footer.hours") : ""}</p>
+      <p className="footer-legal">
+        <Link href="/legal/terminos">{ready ? t("legal.terms") : "Términos de uso"}</Link>
+        {" · "}
+        <Link href="/legal/privacidad">{ready ? t("legal.privacy") : "Privacidad"}</Link>
+        {" · "}
+        <Link href="/legal/aviso-legal">{ready ? t("legal.notice") : "Aviso legal"}</Link>
+      </p>
     </footer>
   );
 }

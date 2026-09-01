@@ -2,8 +2,12 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { buildSlots, isValidDateStr, isBookableDate, localToUtc } from "@/lib/availability";
 import { getBusinessHours, sanitizeHours } from "@/lib/hours";
 import { generateAccessCode, normalizeCode, normalizePhone } from "@/lib/code";
-import { isBlocked, recordFail, clearFails, clientKey, tooManyResponse } from "@/lib/rateLimit";
+import { authBlocked, authFail, authOk, overActionLimit, clientIp, tooManyResponse } from "@/lib/rateLimit";
+import { safeEqual } from "@/lib/security";
 import { logActivity } from "@/lib/audit";
+
+// Máximo de citas futuras confirmadas por cliente (anti-abuso)
+const MAX_ACTIVE_APPOINTMENTS = 3;
 import { sendBookingConfirmation } from "@/lib/email";
 
 export const dynamic = "force-dynamic";
@@ -50,6 +54,11 @@ export async function POST(request) {
     return Response.json({ error: "Petición no válida" }, { status: 400 });
   }
 
+  // Honeypot anti-bots (campo oculto que solo rellenan los bots)
+  if (typeof body?.website === "string" && body.website.trim() !== "") {
+    return Response.json({ error: "No se pudo completar" }, { status: 400 });
+  }
+
   const { serviceId, employeeId, date, startsAt } = body || {};
   const name = typeof body?.name === "string" ? body.name.trim().slice(0, 80) : "";
   const phone = normalizePhone(body?.phone);
@@ -69,6 +78,11 @@ export async function POST(request) {
   }
 
   const db = supabaseAdmin();
+
+  // Anti-spam: máximo 6 intentos de reserva por IP y hora
+  if (await overActionLimit(db, `book:${clientIp(request)}`, 6, 60 * 60 * 1000)) {
+    return tooManyResponse();
+  }
 
   const [{ data: service }, { data: employee }, generalHours] = await Promise.all([
     db.from("services").select("id,name,duration_min,price_eur").eq("id", serviceId).eq("active", true).single(),
@@ -113,11 +127,10 @@ export async function POST(request) {
     .eq("phone", phone)
     .maybeSingle();
   if (existing) {
-    const key = clientKey(request, phone);
-    if (isBlocked(key)) return tooManyResponse();
+    if (await authBlocked(db, request, phone)) return tooManyResponse();
     const givenCode = normalizeCode(body?.code);
-    if (!existing.access_code || existing.access_code !== givenCode) {
-      recordFail(key);
+    if (!safeEqual(existing.access_code, givenCode)) {
+      await authFail(db, request, phone);
       return Response.json(
         {
           error:
@@ -126,7 +139,7 @@ export async function POST(request) {
         { status: 401 }
       );
     }
-    clearFails(key);
+    await authOk(db, request, phone);
     clientId = existing.id;
     accessCode = existing.access_code;
   } else {
@@ -147,6 +160,23 @@ export async function POST(request) {
       return Response.json({ error: "No se pudo guardar el cliente" }, { status: 500 });
     }
     clientId = created.id;
+  }
+
+  // Anti-abuso: un cliente no puede acumular más de MAX_ACTIVE_APPOINTMENTS
+  // citas futuras confirmadas desde la web (en mostrador no hay límite).
+  const { count: activeCount } = await db
+    .from("appointments")
+    .select("id", { count: "exact", head: true })
+    .eq("client_id", clientId)
+    .eq("status", "confirmed")
+    .gte("starts_at", new Date().toISOString());
+  if ((activeCount ?? 0) >= MAX_ACTIVE_APPOINTMENTS) {
+    return Response.json(
+      {
+        error: `Ya tienes ${MAX_ACTIVE_APPOINTMENTS} citas pendientes. Cancela alguna desde "Mis citas" o llámanos para reservar más.`,
+      },
+      { status: 409 }
+    );
   }
 
   // Reservar stock de productos (si hay). Descuento condicional: solo si queda stock.

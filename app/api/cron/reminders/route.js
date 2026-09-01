@@ -1,6 +1,21 @@
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { sendReminder, emailEnabled } from "@/lib/email";
+import { safeEqual } from "@/lib/security";
 import { logActivity } from "@/lib/audit";
+
+// Retención de datos (RGPD): el registro de actividad se conserva 12 meses
+const ACTIVITY_RETENTION_DAYS = 365;
+
+// Limpieza diaria: actividad antigua y contadores de límite caducados
+async function purgeOldData(db) {
+  try {
+    const cutoff = new Date(Date.now() - ACTIVITY_RETENTION_DAYS * 86400000).toISOString();
+    await db.from("activity_log").delete().lt("created_at", cutoff);
+    await db.from("rate_limits").delete().lt("until", new Date().toISOString());
+  } catch {
+    /* best effort: nunca rompe el cron */
+  }
+}
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -11,17 +26,20 @@ export async function GET(request) {
   // Solo Vercel Cron (o quien conozca CRON_SECRET) puede lanzarlo
   const secret = process.env.CRON_SECRET;
   if (secret) {
-    const auth = request.headers.get("authorization");
-    if (auth !== `Bearer ${secret}`) {
+    const auth = request.headers.get("authorization") || "";
+    if (!safeEqual(auth, `Bearer ${secret}`)) {
       return Response.json({ error: "No autorizado" }, { status: 401 });
     }
   }
 
+  const db = supabaseAdmin();
+
+  // Limpieza de datos con cada pasada diaria
+  await purgeOldData(db);
+
   if (!emailEnabled()) {
     return Response.json({ ok: true, sent: 0, note: "email no configurado" });
   }
-
-  const db = supabaseAdmin();
   const now = new Date();
   const horizon = new Date(now.getTime() + 26 * 3600000);
 

@@ -12,6 +12,8 @@ export function ClientAuth({ onAuth, intro }) {
   const [phone, setPhone] = useState("");
   const [email, setEmail] = useState("");
   const [code, setCode] = useState("");
+  const [accept, setAccept] = useState(false);
+  const [website, setWebsite] = useState(""); // honeypot: los humanos no lo ven
   const [newCode, setNewCode] = useState(null);
   const [pendingSession, setPendingSession] = useState(null);
   const [error, setError] = useState("");
@@ -28,7 +30,7 @@ export function ClientAuth({ onAuth, intro }) {
         body: JSON.stringify(
           mode === "login"
             ? { action: "login", phone, code }
-            : { action: "register", name, phone, email }
+            : { action: "register", name, phone, email, acceptTerms: accept, website }
         ),
       });
       const data = await res.json();
@@ -107,8 +109,43 @@ export function ClientAuth({ onAuth, intro }) {
           <input value={code} onChange={(e) => setCode(e.target.value)} required placeholder="FB-000000" style={{ textTransform: "uppercase", letterSpacing: "2px" }} />
         </>
       )}
+      {mode === "register" && (
+        <>
+          {/* Honeypot anti-bots: invisible para personas */}
+          <div className="hp-field" aria-hidden="true">
+            <label htmlFor="website-field">Website</label>
+            <input
+              id="website-field"
+              name="website"
+              type="text"
+              value={website}
+              onChange={(e) => setWebsite(e.target.value)}
+              tabIndex={-1}
+              autoComplete="off"
+            />
+          </div>
+          <label className="consent-row">
+            <input
+              type="checkbox"
+              checked={accept}
+              onChange={(e) => setAccept(e.target.checked)}
+              required
+            />
+            <span>
+              {t("auth.accept1")}{" "}
+              <a href="/legal/terminos" target="_blank" rel="noopener noreferrer">
+                {t("auth.acceptTerms")}
+              </a>{" "}
+              {t("auth.accept2")}{" "}
+              <a href="/legal/privacidad" target="_blank" rel="noopener noreferrer">
+                {t("auth.acceptPrivacy")}
+              </a>
+            </span>
+          </label>
+        </>
+      )}
       <div style={{ marginTop: 14 }}>
-        <button type="submit" disabled={loading}>
+        <button type="submit" disabled={loading || (mode === "register" && !accept)}>
           {loading ? t("auth.wait") : mode === "login" ? t("auth.enter") : t("auth.create")}
         </button>
       </div>

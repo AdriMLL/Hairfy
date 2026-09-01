@@ -1,6 +1,7 @@
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { generateAccessCode, normalizeCode, normalizePhone, validateCustomCode } from "@/lib/code";
-import { isBlocked, recordFail, clearFails, clientKey, tooManyResponse } from "@/lib/rateLimit";
+import { authBlocked, authFail, authOk, overActionLimit, clientIp, tooManyResponse } from "@/lib/rateLimit";
+import { safeEqual } from "@/lib/security";
 import { logActivity } from "@/lib/audit";
 
 export const dynamic = "force-dynamic";
@@ -25,6 +26,12 @@ export async function POST(request) {
     return Response.json({ error: "Petición no válida" }, { status: 400 });
   }
 
+  // Honeypot anti-bots: el campo "website" está oculto en el formulario;
+  // solo un bot lo rellena. Respondemos con un error genérico.
+  if (typeof body?.website === "string" && body.website.trim() !== "") {
+    return Response.json({ error: "No se pudo completar" }, { status: 400 });
+  }
+
   const db = supabaseAdmin();
   const phone = normalizePhone(body?.phone);
   if (!phone || phone.replace(/\D/g, "").length < 9) {
@@ -32,8 +39,7 @@ export async function POST(request) {
   }
 
   if (body?.action === "login") {
-    const key = clientKey(request, phone);
-    if (isBlocked(key)) return tooManyResponse();
+    if (await authBlocked(db, request, phone)) return tooManyResponse();
     const code = normalizeCode(body?.code);
     if (!code) return Response.json({ error: "Escribe tu código" }, { status: 400 });
     const { data: client } = await db
@@ -41,18 +47,28 @@ export async function POST(request) {
       .select("name,access_code,email")
       .eq("phone", phone)
       .maybeSingle();
-    if (!client || !client.access_code || client.access_code !== code) {
-      recordFail(key);
+    if (!client || !safeEqual(client.access_code, code)) {
+      await authFail(db, request, phone);
       return Response.json({ error: "Teléfono o código incorrectos" }, { status: 401 });
     }
-    clearFails(key);
+    await authOk(db, request, phone);
     return Response.json({ ok: true, name: client.name, email: client.email });
   }
 
   if (body?.action === "register") {
+    // Anti-spam: máximo 5 fichas nuevas por IP y hora
+    if (await overActionLimit(db, `reg:${clientIp(request)}`, 5, 60 * 60 * 1000)) {
+      return tooManyResponse();
+    }
     const name = typeof body?.name === "string" ? body.name.trim().slice(0, 80) : "";
     if (name.length < 2) {
       return Response.json({ error: "Escribe tu nombre" }, { status: 400 });
+    }
+    if (body?.acceptTerms !== true) {
+      return Response.json(
+        { error: "Debes aceptar los términos de uso y la política de privacidad" },
+        { status: 400 }
+      );
     }
     const email = sanitizeEmail(body?.email);
     if (body?.email && !email) {
@@ -77,7 +93,13 @@ export async function POST(request) {
       const candidate = generateAccessCode();
       const { data } = await db
         .from("clients")
-        .insert({ name, phone, access_code: candidate, email })
+        .insert({
+          name,
+          phone,
+          access_code: candidate,
+          email,
+          accepted_terms_at: new Date().toISOString(),
+        })
         .select("id")
         .single();
       if (data) accessCode = candidate;
@@ -91,19 +113,18 @@ export async function POST(request) {
 
   if (body?.action === "change-email") {
     // El cliente añade o cambia su email (para confirmaciones y recordatorios)
-    const key = clientKey(request, phone);
-    if (isBlocked(key)) return tooManyResponse();
+    if (await authBlocked(db, request, phone)) return tooManyResponse();
     const current = normalizeCode(body?.code);
     const { data: client } = await db
       .from("clients")
       .select("id,name,access_code")
       .eq("phone", phone)
       .maybeSingle();
-    if (!client || !client.access_code || client.access_code !== current) {
-      recordFail(key);
+    if (!client || !safeEqual(client.access_code, current)) {
+      await authFail(db, request, phone);
       return Response.json({ error: "Teléfono o código incorrectos" }, { status: 401 });
     }
-    clearFails(key);
+    await authOk(db, request, phone);
     const email = sanitizeEmail(body?.email);
     if (body?.email && !email) {
       return Response.json({ error: "El email no parece válido" }, { status: 400 });
@@ -116,19 +137,18 @@ export async function POST(request) {
 
   if (body?.action === "change-code") {
     // El cliente personaliza su código (letras y números, 4-12 caracteres)
-    const key = clientKey(request, phone);
-    if (isBlocked(key)) return tooManyResponse();
+    if (await authBlocked(db, request, phone)) return tooManyResponse();
     const current = normalizeCode(body?.code);
     const { data: client } = await db
       .from("clients")
       .select("id,name,access_code")
       .eq("phone", phone)
       .maybeSingle();
-    if (!client || !client.access_code || client.access_code !== current) {
-      recordFail(key);
+    if (!client || !safeEqual(client.access_code, current)) {
+      await authFail(db, request, phone);
       return Response.json({ error: "Teléfono o código incorrectos" }, { status: 401 });
     }
-    clearFails(key);
+    await authOk(db, request, phone);
     const newCode = validateCustomCode(body?.newCode);
     if (!newCode) {
       return Response.json(

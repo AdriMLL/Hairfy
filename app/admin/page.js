@@ -1738,7 +1738,7 @@ function Clients({ api }) {
     )
       return;
     try {
-      await api(`clients?id=${c.id}`, { method: "DELETE" });
+      await api(`clients?id=${c.id}&confirm=1`, { method: "DELETE" });
       reload();
     } catch (e2) {
       setError(e2.message);

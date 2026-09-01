@@ -781,3 +781,71 @@ th { color: var(--muted); font-weight: 600; text-transform: uppercase; font-size
   .slot { min-height: 44px; }
   .qty-btn { width: 40px; height: 40px; }
 }
+
+/* ---- Legal y consentimiento (v16) ---- */
+
+/* Honeypot anti-bots: fuera de pantalla, invisible para personas */
+.hp-field {
+  position: absolute;
+  left: -9999px;
+  top: -9999px;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.consent-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  margin-top: 14px;
+  font-size: 0.85rem;
+  color: var(--muted);
+  cursor: pointer;
+  line-height: 1.45;
+  font-weight: 400;
+  text-transform: none;
+  letter-spacing: normal;
+}
+.consent-row input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
+  margin: 2px 0 0;
+  accent-color: var(--gold-strong);
+  flex: none;
+  cursor: pointer;
+}
+.consent-row a {
+  color: var(--gold-strong);
+  text-decoration: underline;
+}
+
+.footer-legal {
+  margin-top: 10px;
+  font-size: 0.8rem;
+}
+.footer-legal a {
+  color: var(--muted);
+  text-decoration: underline;
+}
+.footer-legal a:hover {
+  color: var(--gold-strong);
+}
+
+/* Páginas legales */
+.legal h2 {
+  font-size: 1.05rem;
+  margin: 26px 0 8px;
+  color: var(--gold-strong);
+}
+.legal p {
+  font-size: 0.93rem;
+  color: var(--ink);
+  margin: 0 0 10px;
+  line-height: 1.65;
+}
+.legal a {
+  color: var(--gold-strong);
+}

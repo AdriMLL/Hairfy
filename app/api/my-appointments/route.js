@@ -1,7 +1,8 @@
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { normalizeCode, normalizePhone } from "@/lib/code";
 import { BUSINESS } from "@/lib/config";
-import { isBlocked, recordFail, clearFails, clientKey } from "@/lib/rateLimit";
+import { authBlocked, authFail, authOk } from "@/lib/rateLimit";
+import { safeEqual } from "@/lib/security";
 import { logActivity } from "@/lib/audit";
 
 export const dynamic = "force-dynamic";
@@ -13,19 +14,18 @@ async function authClient(request, body) {
   const phone = normalizePhone(body?.phone);
   const code = normalizeCode(body?.code);
   if (!phone || phone.replace(/\D/g, "").length < 9 || !code) return null;
-  const key = clientKey(request, phone);
-  if (isBlocked(key)) return "blocked";
   const db = supabaseAdmin();
+  if (await authBlocked(db, request, phone)) return "blocked";
   const { data: client } = await db
     .from("clients")
     .select("id,name,access_code,email")
     .eq("phone", phone)
     .maybeSingle();
-  if (!client || !client.access_code || client.access_code !== code) {
-    recordFail(key);
+  if (!client || !safeEqual(client.access_code, code)) {
+    await authFail(db, request, phone);
     return null;
   }
-  clearFails(key);
+  await authOk(db, request, phone);
   return client;
 }
 

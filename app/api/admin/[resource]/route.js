@@ -798,6 +798,14 @@ export async function DELETE(request, { params }) {
   }
 
   if (resource === "clients") {
+    // Borrado en cascada e irreversible: exige confirmación explícita
+    // también en el servidor (no basta con el diálogo del navegador)
+    if (searchParams.get("confirm") !== "1") {
+      return Response.json(
+        { error: "Borrado no confirmado: falta el parámetro de confirmación" },
+        { status: 400 }
+      );
+    }
     // Borrar la ficha completa: citas, pedidos y reseñas incluidos
     const { data: appts } = await db.from("appointments").select("id").eq("client_id", id);
     for (const a of appts || []) {
