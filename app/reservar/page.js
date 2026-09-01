@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { SiteHeader, SiteFooter } from "@/components/SiteHeader";
+import { ClientAuth } from "@/components/ClientAuth";
 import { loadSession, saveSession, clearSession } from "@/lib/session";
 
 export default function ReservarPage() {
@@ -11,8 +12,6 @@ export default function ReservarPage() {
   const [date, setDate] = useState("");
   const [slots, setSlots] = useState(null);
   const [slot, setSlot] = useState(null);
-  const [name, setName] = useState("");
-  const [phone, setPhone] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [done, setDone] = useState(null);
@@ -31,22 +30,17 @@ export default function ReservarPage() {
   const stepDay = singleEmployee ? 2 : 3;
   const stepData = stepDay + 1;
 
-  // Sesión del cliente en este navegador (evita reescribir datos y duplicados)
+  // Para reservar hay que identificarse primero (como en Pedidos)
   const [session, setSession] = useState(null);
+  const [ready, setReady] = useState(false);
   useEffect(() => {
-    const s = loadSession();
-    if (s) {
-      setSession(s);
-      setName(s.name);
-      setPhone(s.phone);
-    }
+    setSession(loadSession());
+    setReady(true);
   }, []);
 
   function logout() {
     clearSession();
     setSession(null);
-    setName("");
-    setPhone("");
   }
 
   const { minDate, maxDate } = useMemo(() => {
@@ -84,8 +78,8 @@ export default function ReservarPage() {
           employeeId: employee.id,
           date,
           startsAt: slot.startsAt,
-          name,
-          phone,
+          name: session.name,
+          phone: session.phone,
         }),
       });
       const data = await res.json();
@@ -102,11 +96,11 @@ export default function ReservarPage() {
           setSlot(null);
         }
       } else {
-        if (data.accessCode) {
-          saveSession({ name, phone, code: data.accessCode });
-          setSession({ name, phone, code: data.accessCode });
+        if (data.accessCode && data.accessCode !== session.code) {
+          saveSession({ ...session, code: data.accessCode });
+          setSession({ ...session, code: data.accessCode });
         }
-        setDone({ startsAt: data.startsAt, accessCode: data.accessCode });
+        setDone({ startsAt: data.startsAt });
       }
     } catch {
       setError("Error de conexión. Inténtalo de nuevo.");
@@ -133,10 +127,10 @@ export default function ReservarPage() {
             <p style={{ fontSize: "1.05rem" }}>
               Te esperamos el <strong style={{ color: "var(--gold-strong)" }}>{when}</strong>
             </p>
-            {done.accessCode && (
+            {session?.code && (
               <div className="code-box">
-                <small>Tu código de cliente — guárdalo para consultar o cancelar tus citas</small>
-                <span className="code">{done.accessCode}</span>
+                <small>Tu código de cliente — con él consultas o cancelas tus citas</small>
+                <span className="code">{session.code}</span>
               </div>
             )}
             <div style={{ display: "flex", gap: 10, justifyContent: "center", flexWrap: "wrap" }}>
@@ -162,11 +156,24 @@ export default function ReservarPage() {
         <p>En menos de un minuto, sin llamadas ni esperas</p>
         {session && (
           <p style={{ color: "var(--muted)", marginTop: 12, fontSize: "0.9rem" }}>
-            Hola de nuevo, <strong style={{ color: "var(--gold-strong)" }}>{session.name}</strong> 👋
+            Hola, <strong style={{ color: "var(--gold-strong)" }}>{session.name}</strong> 👋{" "}
+            <button type="button" className="secondary small" style={{ marginLeft: 6 }} onClick={logout}>
+              No soy yo
+            </button>
           </p>
         )}
       </div>
       <main className="container">
+        {!ready ? (
+          <div className="card"><p style={{ color: "var(--muted)" }}>Cargando…</p></div>
+        ) : !session ? (
+          <div className="card">
+            <ClientAuth
+              onAuth={setSession}
+              intro="Antes de reservar, dinos quién eres: si ya tienes código entra con él, y si es tu primera vez crea tu ficha en 10 segundos."
+            />
+          </div>
+        ) : (
         <form className="card" onSubmit={submit}>
           <div className="step-title">
             <span className="step-num">1</span>
@@ -274,48 +281,13 @@ export default function ReservarPage() {
             <>
               <div className="step-title">
                 <span className="step-num">{stepData}</span>
-                <h2 style={{ margin: 0 }}>Tus datos</h2>
+                <h2 style={{ margin: 0 }}>Confirma tu reserva</h2>
               </div>
-              {session ? (
-                <p style={{ margin: "4px 0 0" }}>
-                  Reservando como{" "}
-                  <strong style={{ color: "var(--gold-strong)" }}>{session.name}</strong>{" "}
-                  ({session.phone}){" "}
-                  <button type="button" className="secondary small" style={{ marginLeft: 8 }} onClick={logout}>
-                    No soy yo
-                  </button>
-                </p>
-              ) : (
-                <>
-                  <label htmlFor="name">Nombre</label>
-                  <input
-                    id="name"
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    required
-                    minLength={2}
-                    maxLength={80}
-                    autoComplete="name"
-                    placeholder="María García"
-                  />
-                  <label htmlFor="phone">Teléfono</label>
-                  <input
-                    id="phone"
-                    type="tel"
-                    value={phone}
-                    onChange={(e) => setPhone(e.target.value)}
-                    required
-                    minLength={9}
-                    maxLength={20}
-                    autoComplete="tel"
-                    placeholder="600 123 456"
-                  />
-                  <p style={{ color: "var(--muted)", fontSize: "0.82rem" }}>
-                    Si ya has reservado antes, usa el mismo teléfono: te reconocemos
-                    por él y no se duplica tu ficha.
-                  </p>
-                </>
-              )}
+              <p style={{ margin: "4px 0 0", color: "var(--muted)" }}>
+                Reservando como{" "}
+                <strong style={{ color: "var(--gold-strong)" }}>{session.name}</strong>{" "}
+                ({session.phone})
+              </p>
               <div className="summary">
                 <strong>{service.name}</strong> con <strong>{employee.name}</strong> ·{" "}
                 {new Date(slot.startsAt).toLocaleString("es-ES", {
@@ -339,6 +311,7 @@ export default function ReservarPage() {
 
           {error && <p className="msg-error">{error}</p>}
         </form>
+        )}
       </main>
       <SiteFooter />
     </>

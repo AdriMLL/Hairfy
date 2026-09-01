@@ -11,6 +11,7 @@ export function ClientAuth({ onAuth, intro }) {
   const [phone, setPhone] = useState("");
   const [code, setCode] = useState("");
   const [newCode, setNewCode] = useState(null);
+  const [pendingSession, setPendingSession] = useState(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -36,10 +37,11 @@ export function ClientAuth({ onAuth, intro }) {
         saveSession(session);
         onAuth(session);
       } else {
-        setNewCode(data.accessCode);
+        // Ficha creada: enseñamos el código antes de continuar
         const session = { name: data.name, phone, code: data.accessCode };
         saveSession(session);
-        onAuth(session);
+        setNewCode(data.accessCode);
+        setPendingSession(session);
       }
     } catch {
       setError("Error de conexión. Inténtalo de nuevo.");
@@ -53,9 +55,12 @@ export function ClientAuth({ onAuth, intro }) {
       <div>
         <p className="msg-ok">¡Ficha creada, {name}!</p>
         <div className="code-box">
-          <small>Tu código de cliente — guárdalo para entrar la próxima vez</small>
+          <small>Tu código de cliente — guárdalo para entrar la próxima vez (podrás cambiarlo en "Mis citas")</small>
           <span className="code">{newCode}</span>
         </div>
+        <button className="block" onClick={() => onAuth(pendingSession)}>
+          Continuar →
+        </button>
       </div>
     );
   }
