@@ -1,6 +1,6 @@
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { buildSlots, isValidDateStr, isBookableDate, localToUtc } from "@/lib/availability";
-import { getBusinessHours } from "@/lib/hours";
+import { getBusinessHours, sanitizeHours } from "@/lib/hours";
 
 export const dynamic = "force-dynamic";
 
@@ -20,14 +20,15 @@ export async function GET(request) {
   }
 
   const db = supabaseAdmin();
-  const { data: service, error: sErr } = await db
-    .from("services")
-    .select("id,duration_min")
-    .eq("id", serviceId)
-    .eq("active", true)
-    .single();
+  const [{ data: service, error: sErr }, { data: employeeRow }] = await Promise.all([
+    db.from("services").select("id,duration_min").eq("id", serviceId).eq("active", true).single(),
+    db.from("employees").select("id,hours").eq("id", employeeId).eq("active", true).single(),
+  ]);
   if (sErr || !service) {
     return Response.json({ error: "Servicio no encontrado" }, { status: 404 });
+  }
+  if (!employeeRow) {
+    return Response.json({ error: "Profesional no encontrado" }, { status: 404 });
   }
 
   const dayStart = localToUtc(date, "00:00").toISOString();
@@ -46,6 +47,8 @@ export async function GET(request) {
     return Response.json({ error: "Error al consultar la agenda" }, { status: 500 });
   }
 
-  const slots = buildSlots(date, service.duration_min, busy || [], hours);
+  // Horario propio del empleado (si lo tiene); si no, el general
+  const effectiveHours = sanitizeHours(employeeRow.hours) ?? hours;
+  const slots = buildSlots(date, service.duration_min, busy || [], effectiveHours);
   return Response.json({ slots });
 }

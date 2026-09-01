@@ -25,7 +25,7 @@ export function Logo({ size = 34 }) {
     <span className="logo">
       <LogoMark size={size} />
       <span className="logo-word">
-        Hair<span className="logo-accent">fy</span>
+        Fennani <span className="logo-accent">Barbershop</span>
       </span>
     </span>
   );

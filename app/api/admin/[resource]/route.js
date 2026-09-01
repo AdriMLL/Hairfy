@@ -16,9 +16,9 @@ const RESOURCES = {
     updateFields: ["name", "duration_min", "price_eur", "active"],
   },
   employees: {
-    select: "id,name,active,created_at",
+    select: "id,name,active,hours,created_at",
     insertFields: ["name"],
-    updateFields: ["name", "active"],
+    updateFields: ["name", "active"], // hours se valida aparte
   },
   clients: {
     select: "id,name,phone,access_code,created_at",
@@ -32,6 +32,8 @@ const RESOURCES = {
   },
   appointments: null, // gestionado aparte (necesita joins)
   settings: null, // gestionado aparte (validación específica)
+  reviews: null, // gestionado aparte (joins + aprobación)
+  gallery: null, // gestionado aparte (Storage)
 };
 
 function pick(body, fields) {
@@ -119,6 +121,82 @@ export async function GET(request, { params }) {
     return Response.json({ data: { business_hours: data?.value ?? null } });
   }
 
+  if (resource === "reviews") {
+    const { data, error } = await db
+      .from("reviews")
+      .select("id,rating,comment,approved,created_at,clients(name),appointments(starts_at)")
+      .order("created_at", { ascending: false })
+      .limit(200);
+    if (error) return Response.json({ error: "Error al cargar reseñas" }, { status: 500 });
+    return Response.json({ data });
+  }
+
+  if (resource === "gallery") {
+    const { data, error } = await db
+      .from("gallery")
+      .select("id,url,path,caption,created_at")
+      .order("created_at", { ascending: false })
+      .limit(100);
+    if (error) return Response.json({ error: "Error al cargar la galería" }, { status: 500 });
+    return Response.json({ data });
+  }
+
+  if (resource === "stats") {
+    const weeks = 8;
+    const since = new Date(Date.now() - weeks * 7 * 86400000).toISOString();
+    const { data, error } = await db
+      .from("appointments")
+      .select("id,starts_at,status,services(name,price_eur),clients(id,name)")
+      .gte("starts_at", since)
+      .order("starts_at")
+      .limit(5000);
+    if (error) return Response.json({ error: "Error al calcular estadísticas" }, { status: 500 });
+
+    const confirmed = (data || []).filter((a) => a.status === "confirmed");
+    const weekly = new Map();
+    const byService = new Map();
+    const byClient = new Map();
+    let revenue = 0;
+    for (const a of confirmed) {
+      const d = new Date(a.starts_at);
+      // Lunes de esa semana como clave
+      const monday = new Date(d);
+      const dow = (d.getUTCDay() + 6) % 7;
+      monday.setUTCDate(d.getUTCDate() - dow);
+      const wk = monday.toISOString().slice(0, 10);
+      const price = Number(a.services?.price_eur || 0);
+      revenue += price;
+      const w = weekly.get(wk) || { count: 0, revenue: 0 };
+      w.count += 1;
+      w.revenue += price;
+      weekly.set(wk, w);
+      const sName = a.services?.name || "—";
+      byService.set(sName, (byService.get(sName) || 0) + 1);
+      if (a.clients?.id) {
+        const c = byClient.get(a.clients.id) || { name: a.clients.name, count: 0 };
+        c.count += 1;
+        byClient.set(a.clients.id, c);
+      }
+    }
+    return Response.json({
+      data: {
+        weeks,
+        totalAppointments: confirmed.length,
+        totalRevenue: revenue,
+        weekly: [...weekly.entries()]
+          .sort((a, b) => (a[0] < b[0] ? -1 : 1))
+          .map(([weekStart, v]) => ({ weekStart, ...v })),
+        topServices: [...byService.entries()]
+          .sort((a, b) => b[1] - a[1])
+          .slice(0, 8)
+          .map(([name, count]) => ({ name, count })),
+        topClients: [...byClient.values()]
+          .sort((a, b) => b.count - a.count)
+          .slice(0, 8),
+      },
+    });
+  }
+
   const cfg = RESOURCES[resource];
   if (!cfg) return Response.json({ error: "Recurso desconocido" }, { status: 404 });
 
@@ -135,6 +213,51 @@ export async function POST(request, { params }) {
   const user = await requireAdmin(request);
   if (!user) return unauthorized();
   const { resource } = params;
+
+  if (resource === "gallery") {
+    // Subida de foto: { imageBase64, contentType, caption }
+    let body;
+    try {
+      body = await request.json();
+    } catch {
+      return Response.json({ error: "Petición no válida" }, { status: 400 });
+    }
+    const contentType = ["image/jpeg", "image/png", "image/webp"].includes(body?.contentType)
+      ? body.contentType
+      : null;
+    const b64 = typeof body?.imageBase64 === "string" ? body.imageBase64 : "";
+    if (!contentType || !b64 || b64.length > 8_000_000) {
+      return Response.json(
+        { error: "Imagen no válida (JPG/PNG/WebP, máx ~5MB)" },
+        { status: 400 }
+      );
+    }
+    let buffer;
+    try {
+      buffer = Buffer.from(b64, "base64");
+    } catch {
+      return Response.json({ error: "Imagen no válida" }, { status: 400 });
+    }
+    const ext = contentType === "image/png" ? "png" : contentType === "image/webp" ? "webp" : "jpg";
+    const path = `trabajos/${Date.now()}-${Math.random().toString(36).slice(2, 8)}.${ext}`;
+    const db = supabaseAdmin();
+    const { error: upErr } = await db.storage
+      .from("gallery")
+      .upload(path, buffer, { contentType });
+    if (upErr) {
+      return Response.json({ error: "No se pudo subir la imagen" }, { status: 500 });
+    }
+    const { data: pub } = db.storage.from("gallery").getPublicUrl(path);
+    const caption = typeof body?.caption === "string" ? body.caption.slice(0, 120) : null;
+    const { data, error } = await db
+      .from("gallery")
+      .insert({ url: pub.publicUrl, path, caption })
+      .select("id,url,path,caption,created_at")
+      .single();
+    if (error) return Response.json({ error: "No se pudo guardar la foto" }, { status: 500 });
+    return Response.json({ data });
+  }
+
   const cfg = RESOURCES[resource];
   if (!cfg || cfg.insertFields.length === 0) {
     return Response.json({ error: "Operación no permitida" }, { status: 405 });
@@ -188,6 +311,32 @@ export async function PATCH(request, { params }) {
   const id = body?.id;
   if (!id) return Response.json({ error: "Falta el id" }, { status: 400 });
 
+  if (resource === "reviews") {
+    if (typeof body?.approved !== "boolean") {
+      return Response.json({ error: "Falta el estado de aprobación" }, { status: 400 });
+    }
+    const { error } = await db.from("reviews").update({ approved: body.approved }).eq("id", id);
+    if (error) return Response.json({ error: "No se pudo actualizar" }, { status: 400 });
+    return Response.json({ ok: true });
+  }
+
+  if (resource === "employees" && body.hours !== undefined) {
+    // Horario propio del empleado: null = usa el general
+    let hoursValue = null;
+    if (body.hours !== null) {
+      hoursValue = sanitizeHours(body.hours);
+      if (!hoursValue) {
+        return Response.json(
+          { error: "Horario no válido: revisa las horas (apertura < cierre)" },
+          { status: 400 }
+        );
+      }
+    }
+    const { error } = await db.from("employees").update({ hours: hoursValue }).eq("id", id);
+    if (error) return Response.json({ error: "No se pudo guardar el horario" }, { status: 400 });
+    return Response.json({ ok: true });
+  }
+
   if (resource === "appointments") {
     // Solo se permite cambiar el estado (cancelar / reactivar)
     const status = body?.status;
@@ -228,5 +377,29 @@ export async function PATCH(request, { params }) {
   }
   const { error } = await db.from(resource).update(values).eq("id", id);
   if (error) return Response.json({ error: "No se pudo actualizar" }, { status: 400 });
+  return Response.json({ ok: true });
+}
+
+export async function DELETE(request, { params }) {
+  const user = await requireAdmin(request);
+  if (!user) return unauthorized();
+  const { resource } = params;
+  if (!["gallery", "reviews"].includes(resource)) {
+    return Response.json({ error: "Operación no permitida" }, { status: 405 });
+  }
+  const { searchParams } = new URL(request.url);
+  const id = searchParams.get("id");
+  if (!id) return Response.json({ error: "Falta el id" }, { status: 400 });
+  const db = supabaseAdmin();
+
+  if (resource === "gallery") {
+    const { data: row } = await db.from("gallery").select("path").eq("id", id).maybeSingle();
+    if (row?.path) {
+      await db.storage.from("gallery").remove([row.path]);
+    }
+  }
+
+  const { error } = await db.from(resource).delete().eq("id", id);
+  if (error) return Response.json({ error: "No se pudo borrar" }, { status: 400 });
   return Response.json({ ok: true });
 }

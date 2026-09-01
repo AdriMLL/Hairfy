@@ -39,7 +39,7 @@ export async function POST(request) {
   const { data, error } = await db
     .from("appointments")
     .select(
-      "id,starts_at,ends_at,status,services(name,price_eur),employees(name),appointment_products(quantity,products(name,price_eur))"
+      "id,starts_at,ends_at,status,services(name,price_eur),employees(name),appointment_products(quantity,products(name,price_eur)),reviews(id,rating)"
     )
     .eq("client_id", client.id)
     .gte("starts_at", since)
@@ -64,6 +64,12 @@ export async function POST(request) {
     })),
     cancellable:
       a.status === "confirmed" && new Date(a.starts_at).getTime() > limit,
+    reviewed: (a.reviews?.length ?? 0) > 0,
+    myRating: a.reviews?.[0]?.rating ?? null,
+    reviewable:
+      a.status === "confirmed" &&
+      new Date(a.ends_at) < new Date() &&
+      (a.reviews?.length ?? 0) === 0,
   }));
 
   return Response.json({ name: client.name, appointments });

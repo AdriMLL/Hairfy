@@ -1,6 +1,6 @@
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { buildSlots, isValidDateStr, isBookableDate, localToUtc } from "@/lib/availability";
-import { getBusinessHours } from "@/lib/hours";
+import { getBusinessHours, sanitizeHours } from "@/lib/hours";
 import { generateAccessCode, normalizePhone } from "@/lib/code";
 
 export const dynamic = "force-dynamic";
@@ -67,14 +67,16 @@ export async function POST(request) {
 
   const db = supabaseAdmin();
 
-  const [{ data: service }, { data: employee }, hours] = await Promise.all([
+  const [{ data: service }, { data: employee }, generalHours] = await Promise.all([
     db.from("services").select("id,duration_min").eq("id", serviceId).eq("active", true).single(),
-    db.from("employees").select("id").eq("id", employeeId).eq("active", true).single(),
+    db.from("employees").select("id,hours").eq("id", employeeId).eq("active", true).single(),
     getBusinessHours(),
   ]);
   if (!service || !employee) {
     return Response.json({ error: "Servicio o empleado no válido" }, { status: 400 });
   }
+  // Horario propio del empleado (si lo tiene); si no, el general
+  const hours = sanitizeHours(employee.hours) ?? generalHours;
 
   // Recalcular la disponibilidad en el servidor: el hueco pedido debe estar libre
   const dayStart = localToUtc(date, "00:00").toISOString();

@@ -43,6 +43,40 @@ export default function MisCitasPage() {
     }
   }
 
+  const [reviewFor, setReviewFor] = useState(null); // id de cita a valorar
+  const [rating, setRating] = useState(0);
+  const [comment, setComment] = useState("");
+
+  async function sendReview(e) {
+    e.preventDefault();
+    if (!rating) {
+      setError("Elige una puntuación de 1 a 5 estrellas");
+      return;
+    }
+    setError("");
+    setLoading(true);
+    try {
+      const res = await fetch("/api/reviews", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ phone, code, appointmentId: reviewFor, rating, comment }),
+      });
+      const data = await res.json();
+      if (!res.ok) setError(data.error || "No se pudo enviar la valoración");
+      else {
+        setNotice("¡Gracias por tu valoración! Se publicará en cuanto la revisemos.");
+        setReviewFor(null);
+        setRating(0);
+        setComment("");
+        await lookup();
+      }
+    } catch {
+      setError("Error de conexión. Inténtalo de nuevo.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   async function cancel(id) {
     if (!window.confirm("¿Seguro que quieres cancelar esta cita?")) return;
     setError("");
@@ -152,12 +186,16 @@ export default function MisCitasPage() {
                           </div>
                         )}
                       </div>
-                      <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                        <span
-                          className={`badge ${a.status === "cancelled" ? "cancelled" : ""}`}
-                        >
-                          {a.status === "cancelled" ? "Cancelada" : "Confirmada"}
-                        </span>
+                      <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                        {a.reviewed ? (
+                          <span className="badge">★ {a.myRating}/5 · Valorada</span>
+                        ) : (
+                          <span
+                            className={`badge ${a.status === "cancelled" ? "cancelled" : ""}`}
+                          >
+                            {a.status === "cancelled" ? "Cancelada" : "Confirmada"}
+                          </span>
+                        )}
                         {a.cancellable && (
                           <button
                             className="danger small"
@@ -167,7 +205,55 @@ export default function MisCitasPage() {
                             Cancelar
                           </button>
                         )}
+                        {a.reviewable && reviewFor !== a.id && (
+                          <button
+                            className="secondary small"
+                            onClick={() => {
+                              setReviewFor(a.id);
+                              setRating(0);
+                              setComment("");
+                            }}
+                          >
+                            ★ Valorar
+                          </button>
+                        )}
                       </div>
+                      {reviewFor === a.id && (
+                        <form onSubmit={sendReview} style={{ width: "100%", marginTop: 10 }}>
+                          <div className="star-picker" role="radiogroup" aria-label="Puntuación">
+                            {[1, 2, 3, 4, 5].map((n) => (
+                              <button
+                                type="button"
+                                key={n}
+                                className={rating >= n ? "on" : ""}
+                                onClick={() => setRating(n)}
+                                aria-label={`${n} estrellas`}
+                              >
+                                ★
+                              </button>
+                            ))}
+                          </div>
+                          <input
+                            style={{ marginTop: 8 }}
+                            placeholder="Cuéntanos qué tal (opcional)"
+                            maxLength={400}
+                            value={comment}
+                            onChange={(e) => setComment(e.target.value)}
+                          />
+                          <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+                            <button type="submit" className="small" disabled={loading}>
+                              Enviar valoración
+                            </button>
+                            <button
+                              type="button"
+                              className="secondary small"
+                              onClick={() => setReviewFor(null)}
+                            >
+                              Ahora no
+                            </button>
+                          </div>
+                        </form>
+                      )}
                     </div>
                   ))}
                 </div>

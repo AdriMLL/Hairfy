@@ -25,9 +25,13 @@ export function SiteFooter() {
   return (
     <footer className="site-footer">
       <p>
-        ✂️ Hairfy · Reserva online las 24 h · Para cambios de última hora,
-        llámanos
+        ✂️ Peluquería Caballero Fennani Barbershop · C. Pedro de Valdivia, 3,
+        Leganés ·{" "}
+        <a href="tel:+34627556151" style={{ color: "var(--gold-strong)" }}>
+          627 55 61 51
+        </a>
       </p>
+      <p style={{ marginTop: 6 }}>Reserva online las 24 h · Para cambios de última hora, llámanos</p>
     </footer>
   );
 }
