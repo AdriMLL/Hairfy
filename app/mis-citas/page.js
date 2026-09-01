@@ -237,7 +237,7 @@ export default function MisCitasPage() {
             </div>
 
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 16 }}>
-              <a href={`/?name=${encodeURIComponent(result.name)}&phone=${encodeURIComponent(phone)}`}>
+              <a href="/reservar">
                 <button>📅 Pedir cita</button>
               </a>
               <button className="secondary" onClick={() => setShowShop((s) => !s)}>

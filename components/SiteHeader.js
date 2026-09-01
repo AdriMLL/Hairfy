@@ -9,14 +9,14 @@ export function SiteHeader({ active }) {
           <Logo />
         </Link>
         <nav className="site-nav">
-          <Link href="/#reservar" className={active === "reservar" ? "active" : ""}>
+          <Link href="/" className={active === "inicio" ? "active" : ""}>
+            Inicio
+          </Link>
+          <Link href="/reservar" className={active === "reservar" ? "active" : ""}>
             Reservar
           </Link>
-          <Link href="/#pedidos" className={active === "pedidos" ? "active" : ""}>
+          <Link href="/pedidos" className={active === "pedidos" ? "active" : ""}>
             Pedidos
-          </Link>
-          <Link href="/#nosotros" className={active === "nosotros" ? "active" : ""}>
-            Nosotros
           </Link>
           <Link href="/mis-citas" className={active === "mis-citas" ? "active" : ""}>
             Mis citas
