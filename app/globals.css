@@ -1228,3 +1228,70 @@ th { color: var(--muted); font-weight: 600; text-transform: uppercase; font-size
   .fc-wrap .fc { min-width: 640px; }
   .appt-detail { flex-direction: column; }
 }
+
+/* ---- v22: formulario "Apuntar cita" rediseñado ---- */
+.na {
+  margin: 6px 0 18px;
+  background: var(--card-2);
+  border: 1px solid var(--gold-dark);
+  border-radius: 14px;
+  overflow: hidden;
+}
+.na-head {
+  padding: 16px 18px 13px;
+  border-bottom: 1px solid var(--line);
+  background: linear-gradient(180deg, rgba(207, 169, 99, 0.08), transparent);
+}
+.na-head h3 { margin: 0; font-size: 1.12rem; }
+.na-head p { margin: 3px 0 0; color: var(--muted); font-size: 0.85rem; }
+.na-section { padding: 16px 18px; }
+.na-section + .na-section { border-top: 1px solid var(--line); }
+.na-step { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+.na-num {
+  background: var(--gold-strong);
+  color: #1a1508;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 800;
+  font-size: 0.8rem;
+  flex: none;
+}
+.na-title { font-weight: 700; font-size: 0.95rem; }
+.na-pills { margin-bottom: 12px; }
+.na-pills .pill { flex: 1; min-width: 130px; text-align: center; }
+.na-search { position: relative; }
+.na-search input { margin: 0; }
+.na-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.na-grid label { margin: 0 0 6px; }
+.na-grid input, .na-grid select { margin: 0; }
+.na-service { grid-column: 1 / -1; }
+.na-hint { color: var(--muted); font-size: 0.85rem; margin: 10px 0 0; }
+.na-footer {
+  padding: 14px 18px 16px;
+  border-top: 1px solid var(--line);
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+  background: linear-gradient(0deg, rgba(207, 169, 99, 0.05), transparent);
+}
+.na-submit { min-width: 230px; }
+.na .selected-client { margin-top: 0; }
+
+@media (max-width: 620px) {
+  .na-head, .na-section, .na-footer { padding-left: 14px; padding-right: 14px; }
+  .na-grid { grid-template-columns: 1fr; }
+  .na-submit { width: 100%; }
+  .na-pills .pill { min-width: 0; }
+}
+
+/* Toolbar de la agenda en móvil: pista en su propia línea */
+.agenda-toolbar .cal-hint { flex-basis: 100%; }
