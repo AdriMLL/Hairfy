@@ -59,7 +59,7 @@ function PedidosTab() {
 
 export default function HomePage() {
   const [meta, setMeta] = useState(null);
-  const [tab, setTab] = useState("reservar"); // reservar | pedidos | nosotros
+  const [tab, setTab] = useState("nosotros"); // nosotros (por defecto) | reservar | pedidos
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
@@ -111,19 +111,19 @@ export default function HomePage() {
           </button>
           <button
             role="tab"
-            aria-selected={tab === "pedidos"}
-            className={`home-tab ${tab === "pedidos" ? "active" : ""}`}
-            onClick={() => setTab("pedidos")}
-          >
-            {t("tab.orders")}
-          </button>
-          <button
-            role="tab"
             aria-selected={tab === "nosotros"}
             className={`home-tab ${tab === "nosotros" ? "active" : ""}`}
             onClick={() => setTab("nosotros")}
           >
             {t("tab.about")}
+          </button>
+          <button
+            role="tab"
+            aria-selected={tab === "pedidos"}
+            className={`home-tab ${tab === "pedidos" ? "active" : ""}`}
+            onClick={() => setTab("pedidos")}
+          >
+            {t("tab.orders")}
           </button>
         </div>
 

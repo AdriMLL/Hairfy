@@ -1082,3 +1082,30 @@ th { color: var(--muted); font-weight: 600; text-transform: uppercase; font-size
 /* ---- v18: ficha de cliente ---- */
 .row-click { cursor: pointer; }
 .row-click:hover td { background: rgba(207, 169, 99, 0.06); }
+
+/* ---- v19: nueva cita mejorada ---- */
+.selected-client {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: rgba(207, 169, 99, 0.1);
+  border: 1px solid rgba(207, 169, 99, 0.4);
+  border-radius: 10px;
+  padding: 10px 14px;
+  margin-top: 4px;
+}
+.wk-add {
+  background: transparent;
+  border: 1px dashed var(--line);
+  border-radius: 6px;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 4px 0;
+  font-size: 0.8rem;
+  width: 100%;
+}
+.wk-add:hover {
+  border-color: var(--gold-strong);
+  color: var(--gold-strong);
+}

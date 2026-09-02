@@ -384,7 +384,12 @@ function Agenda({ api }) {
           </p>
         )}
         {appts.length === 0 ? (
-          <p style={{ color: "var(--muted)", marginTop: 16 }}>No hay citas este día.</p>
+          <p style={{ color: "var(--muted)", marginTop: 16 }}>
+            No hay citas este día.{" "}
+            <button type="button" className="linklike" onClick={() => { setShowNew(true); setNewDone(""); }}>
+              ➕ Apuntar una
+            </button>
+          </p>
         ) : (
           <div className="day-timeline">
             {appts.map((a) => (
@@ -485,6 +490,18 @@ function Agenda({ api }) {
                     </button>
                   ))
                 )}
+                <button
+                  type="button"
+                  className="wk-add"
+                  title="Apuntar cita este día"
+                  onClick={() => {
+                    setAnchor(dstr);
+                    setShowNew(true);
+                    setNewDone("");
+                  }}
+                >
+                  ➕
+                </button>
               </div>
             </div>
           );
@@ -702,11 +719,15 @@ function NewAppointment({ api, defaultDate, onDone }) {
   const [date, setDate] = useState(defaultDate || todayStr());
   const [slots, setSlots] = useState(null);
   const [startsAt, setStartsAt] = useState("");
-  const [name, setName] = useState("");
-  const [phone, setPhone] = useState("");
-  const [showSuggestions, setShowSuggestions] = useState(false);
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
+
+  // Cliente: por defecto se busca entre los existentes; "nuevo" crea ficha
+  const [clientMode, setClientMode] = useState("existente"); // existente | nuevo
+  const [search, setSearch] = useState("");
+  const [selected, setSelected] = useState(null); // cliente existente elegido
+  const [name, setName] = useState("");
+  const [phone, setPhone] = useState("");
 
   useEffect(() => {
     Promise.all([api("services"), api("employees"), api("clients")])
@@ -720,24 +741,36 @@ function NewAppointment({ api, defaultDate, onDone }) {
       .catch((e2) => setError(e2.message));
   }, [api]);
 
-  // Buscador de clientes existentes (por nombre o teléfono)
-  const query = (name + " " + phone).trim().toLowerCase();
+  // El día precargado sigue a la fecha que esté mirando la agenda
+  useEffect(() => {
+    if (defaultDate) setDate(defaultDate);
+  }, [defaultDate]);
+
+  // Búsqueda por nombre O teléfono
+  const q = search.trim().toLowerCase();
+  const qDigits = search.replace(/\D/g, "");
   const suggestions =
-    showSuggestions && query.length >= 2
+    clientMode === "existente" && !selected && q.length >= 2
       ? clients
           .filter(
             (c) =>
-              c.name.toLowerCase().includes(name.trim().toLowerCase()) &&
-              (phone.trim() === "" || (c.phone || "").includes(phone.replace(/\D/g, "")))
+              c.name.toLowerCase().includes(q) ||
+              (qDigits.length >= 3 && (c.phone || "").includes(qDigits))
           )
-          .filter((c) => name.trim() !== "" || phone.trim() !== "")
           .slice(0, 6)
       : [];
 
+  // En modo "nuevo": avisar si el teléfono ya tiene ficha
+  const phoneDigits = phone.replace(/\D/g, "");
+  const phoneMatch =
+    clientMode === "nuevo" && phoneDigits.length >= 9
+      ? clients.find((c) => (c.phone || "").replace(/\D/g, "") === phoneDigits.replace(/^34/, "").replace(/^0034/, "")) ||
+        clients.find((c) => (c.phone || "").includes(phoneDigits.slice(-9)))
+      : null;
+
   function pickClient(c) {
-    setName(c.name);
-    setPhone(c.phone);
-    setShowSuggestions(false);
+    setSelected(c);
+    setSearch("");
   }
 
   useEffect(() => {
@@ -751,17 +784,27 @@ function NewAppointment({ api, defaultDate, onDone }) {
       .catch(() => setError("No se pudo consultar la disponibilidad"));
   }, [serviceId, employeeId, date]);
 
+  const clientName = clientMode === "existente" ? selected?.name || "" : name;
+  const clientPhone = clientMode === "existente" ? selected?.phone || "" : phone;
+  const clientReady = clientName.trim().length >= 2 && clientPhone.replace(/\D/g, "").length >= 9;
+
   async function submit(e) {
     e.preventDefault();
     setError("");
+    if (!clientReady) {
+      setError(clientMode === "existente" ? "Elige un cliente de la lista (o pasa a \"Cliente nuevo\")" : "Faltan el nombre o el teléfono");
+      return;
+    }
     setSaving(true);
     try {
       const res = await api("appointments", {
         method: "POST",
-        body: JSON.stringify({ serviceId, employeeId, date, startsAt, name, phone }),
+        body: JSON.stringify({ serviceId, employeeId, date, startsAt, name: clientName, phone: clientPhone }),
       });
       onDone(
-        `Cita apuntada para ${name}. Su código de cliente es ${res.accessCode} (díselo para que pueda ver o cancelar sus citas en la web).`
+        clientMode === "existente"
+          ? `Cita apuntada para ${clientName}.`
+          : `Cita apuntada para ${clientName}. Su código de cliente es ${res.accessCode} (díselo para que pueda ver o cancelar sus citas en la web).`
       );
     } catch (e2) {
       setError(e2.message);
@@ -774,48 +817,94 @@ function NewAppointment({ api, defaultDate, onDone }) {
 
   return (
     <form onSubmit={submit} style={{ marginTop: 14, padding: 16, border: "1px dashed var(--gold-dark)", borderRadius: 12 }}>
-      <h3 style={{ margin: "0 0 6px" }}>Apuntar cita (cliente por teléfono o en tienda)</h3>
-      <div className="row" style={{ position: "relative" }}>
-        <div>
-          <label>Nombre del cliente</label>
-          <input
-            value={name}
-            onChange={(e) => { setName(e.target.value); setShowSuggestions(true); }}
-            onFocus={() => setShowSuggestions(true)}
-            required
-            minLength={2}
-            placeholder="Escribe para buscar…"
-            autoComplete="off"
-          />
-        </div>
-        <div>
-          <label>Teléfono</label>
-          <input
-            type="tel"
-            value={phone}
-            onChange={(e) => { setPhone(e.target.value); setShowSuggestions(true); }}
-            onFocus={() => setShowSuggestions(true)}
-            required
-            minLength={9}
-            placeholder="600123456"
-            autoComplete="off"
-          />
-        </div>
+      <h3 style={{ margin: "0 0 10px" }}>Apuntar cita (cliente por teléfono o en tienda)</h3>
+
+      <div className="pills" style={{ marginBottom: 6 }}>
+        <button
+          type="button"
+          className={`pill ${clientMode === "existente" ? "selected" : ""}`}
+          onClick={() => { setClientMode("existente"); setError(""); }}
+        >
+          🔍 Cliente existente
+        </button>
+        <button
+          type="button"
+          className={`pill ${clientMode === "nuevo" ? "selected" : ""}`}
+          onClick={() => { setClientMode("nuevo"); setSelected(null); setError(""); }}
+        >
+          🆕 Cliente nuevo
+        </button>
       </div>
-      {suggestions.length > 0 && (
-        <div className="suggest-box">
-          {suggestions.map((c) => (
-            <button type="button" key={c.id} className="suggest-item" onClick={() => pickClient(c)}>
-              <strong>{c.name}</strong>
-              <span style={{ color: "var(--muted)" }}> · {c.phone} · {c.access_code}</span>
-            </button>
-          ))}
-          <div style={{ color: "var(--muted)", fontSize: "0.78rem", padding: "6px 12px" }}>
-            Clientes existentes — elige uno para no duplicar fichas, o sigue
-            escribiendo para crear uno nuevo.
-          </div>
+
+      {clientMode === "existente" && !selected && (
+        <div style={{ position: "relative" }}>
+          <label>Buscar cliente (nombre o teléfono)</label>
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Ej.: María… o 600 12…"
+            autoComplete="off"
+          />
+          {suggestions.length > 0 && (
+            <div className="suggest-box">
+              {suggestions.map((c) => (
+                <button type="button" key={c.id} className="suggest-item" onClick={() => pickClient(c)}>
+                  <strong>{c.name}</strong>
+                  <span style={{ color: "var(--muted)" }}> · {c.phone} · {c.access_code}</span>
+                </button>
+              ))}
+            </div>
+          )}
+          {q.length >= 2 && suggestions.length === 0 && (
+            <p style={{ color: "var(--muted)", fontSize: "0.85rem", margin: "6px 0 0" }}>
+              No hay ningún cliente con ese nombre o teléfono.{" "}
+              <button type="button" className="linklike" onClick={() => { setClientMode("nuevo"); setName(search.replace(/[\d\s+-]{6,}/g, "").trim()); if (qDigits.length >= 9) setPhone(qDigits); }}>
+                Crearlo como cliente nuevo →
+              </button>
+            </p>
+          )}
         </div>
       )}
+
+      {clientMode === "existente" && selected && (
+        <div className="selected-client">
+          <div>
+            <strong>{selected.name}</strong>
+            <span style={{ color: "var(--muted)" }}> · 📞 {selected.phone} · 🔑 {selected.access_code}</span>
+          </div>
+          <button type="button" className="secondary small" onClick={() => setSelected(null)}>
+            Cambiar
+          </button>
+        </div>
+      )}
+
+      {clientMode === "nuevo" && (
+        <>
+          <div className="row">
+            <div>
+              <label>Nombre del cliente</label>
+              <input value={name} onChange={(e) => setName(e.target.value)} required minLength={2} placeholder="María García" autoComplete="off" />
+            </div>
+            <div>
+              <label>Teléfono</label>
+              <input type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} required minLength={9} placeholder="600123456" autoComplete="off" />
+            </div>
+          </div>
+          {phoneMatch && (
+            <p style={{ color: "var(--danger)", fontSize: "0.85rem", margin: "6px 0 0" }}>
+              ⚠️ Ese teléfono ya es de <strong>{phoneMatch.name}</strong>.{" "}
+              <button
+                type="button"
+                className="linklike"
+                onClick={() => { setClientMode("existente"); setSelected(phoneMatch); setName(""); setPhone(""); }}
+              >
+                Usar su ficha →
+              </button>
+            </p>
+          )}
+        </>
+      )}
+
       <div className="row">
         <div>
           <label>Servicio</label>
@@ -872,7 +961,7 @@ function NewAppointment({ api, defaultDate, onDone }) {
         </>
       )}
       <div style={{ marginTop: 14 }}>
-        <button type="submit" disabled={saving || !startsAt}>
+        <button type="submit" disabled={saving || !startsAt || !clientReady}>
           {saving ? "Guardando…" : "Apuntar cita"}
         </button>
       </div>
