@@ -12,6 +12,18 @@ import { Logo } from "@/components/Logo";
 // El calendario solo puede montarse en el navegador
 const FullCalendar = dynamic(() => import("@fullcalendar/react"), { ssr: false });
 
+// Props constantes del calendario: si se recrean en cada render, FullCalendar
+// se reinicializa una y otra vez. Y OJO: expandRows + height:"auto" congela la
+// página (bucle infinito de layout en FullCalendar) — no volver a activarlo.
+const FC_PLUGINS = [timeGridPlugin, dayGridPlugin, interactionPlugin];
+const FC_HEADER = {
+  left: "prev,today,next",
+  center: "title",
+  right: "timeGridDay,timeGridWeek,dayGridMonth",
+};
+const FC_BUTTONS = { today: "Hoy", day: "Día", week: "Semana", month: "Mes" };
+const FC_TIMEFMT = { hour: "2-digit", minute: "2-digit", hour12: false };
+
 function AdminHeader({ children }) {
   return (
     <header className="site-header">
@@ -324,8 +336,9 @@ function Agenda({ api }) {
   // Cambio de vista o de semana: cargar el rango visible
   function onDatesSet(info) {
     const from = madridDate(info.start);
-    const toExclusive = madridDate(info.end);
-    setRange({ from, to: addDays(toExclusive, -1) });
+    const to = addDays(madridDate(info.end), -1);
+    // Solo actualizar si el rango realmente cambia (evita renders en cadena)
+    setRange((prev) => (prev && prev.from === from && prev.to === to ? prev : { from, to }));
   }
 
   // Arrastrar una cita = reprogramarla (el servidor valida hueco, horario y cierres)
@@ -499,16 +512,12 @@ function Agenda({ api }) {
 
       <div className="fc-wrap">
         <FullCalendar
-          plugins={[timeGridPlugin, dayGridPlugin, interactionPlugin]}
+          plugins={FC_PLUGINS}
           initialView="timeGridWeek"
           locale={esLocale}
           firstDay={1}
-          headerToolbar={{
-            left: "prev,today,next",
-            center: "title",
-            right: "timeGridDay,timeGridWeek,dayGridMonth",
-          }}
-          buttonText={{ today: "Hoy", day: "Día", week: "Semana", month: "Mes" }}
+          headerToolbar={FC_HEADER}
+          buttonText={FC_BUTTONS}
           slotMinTime="08:00:00"
           slotMaxTime="22:00:00"
           slotDuration="00:30:00"
@@ -516,7 +525,6 @@ function Agenda({ api }) {
           allDaySlot={false}
           nowIndicator
           height="auto"
-          expandRows
           dayMaxEventRows={4}
           events={events}
           editable
@@ -527,7 +535,7 @@ function Agenda({ api }) {
           eventDrop={onEventDrop}
           eventClick={onEventClick}
           dateClick={onDateClick}
-          eventTimeFormat={{ hour: "2-digit", minute: "2-digit", hour12: false }}
+          eventTimeFormat={FC_TIMEFMT}
         />
       </div>
       <p className="cal-legend">
