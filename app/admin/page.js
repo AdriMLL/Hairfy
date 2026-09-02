@@ -1,8 +1,16 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import dynamic from "next/dynamic";
+import esLocale from "@fullcalendar/core/locales/es";
+import dayGridPlugin from "@fullcalendar/daygrid";
+import timeGridPlugin from "@fullcalendar/timegrid";
+import interactionPlugin from "@fullcalendar/interaction";
 import { supabaseBrowser } from "@/lib/supabaseBrowser";
 import { Logo } from "@/components/Logo";
+
+// El calendario solo puede montarse en el navegador
+const FullCalendar = dynamic(() => import("@fullcalendar/react"), { ssr: false });
 
 function AdminHeader({ children }) {
   return (
@@ -268,83 +276,109 @@ function useList(api, path) {
 // ---------- Agenda ----------
 
 function Agenda({ api }) {
-  const [view, setView] = useState("day"); // day | week | month
-  const [anchor, setAnchor] = useState(todayStr());
-  const [data, setData] = useState(null);
+  const [range, setRange] = useState(null); // { from, to } visible en el calendario
+  const [appts, setAppts] = useState([]);
   const [error, setError] = useState("");
-  const [showNew, setShowNew] = useState(false);
-  const [newDone, setNewDone] = useState("");
+  const [notice, setNotice] = useState("");
+  const [showCancelled, setShowCancelled] = useState(false);
+  const [selected, setSelected] = useState(null); // cita elegida (panel de acciones)
   const [editing, setEditing] = useState(null); // cita en edición
+  const [showNew, setShowNew] = useState(false);
+  const [newDate, setNewDate] = useState(todayStr());
+  const [newTime, setNewTime] = useState(null);
 
-  // Rango de fechas a cargar según la vista
-  const range = useMemo(() => {
-    if (view === "day") return { from: anchor, to: anchor };
-    if (view === "week") {
-      const mon = mondayOf(anchor);
-      return { from: mon, to: addDays(mon, 6) };
-    }
-    const { first, last } = monthRange(anchor);
-    return { from: first, to: last };
-  }, [view, anchor]);
-
-  const reload = useCallback(() => {
+  const load = useCallback(() => {
+    if (!range) return;
     api(`appointments?from=${range.from}&to=${range.to}`)
-      .then((d) => setData(d.data))
+      .then((d) => setAppts(d.data || []))
       .catch((e) => setError(e.message));
   }, [api, range]);
-  useEffect(() => {
-    setData(null);
+  useEffect(load, [load]);
+
+  // Fecha/hora de Madrid de un instante (para hablar con la API)
+  const madridDate = (d) => d.toLocaleDateString("sv-SE", { timeZone: "Europe/Madrid" });
+  const madridTime = (d) =>
+    new Intl.DateTimeFormat("es-ES", {
+      timeZone: "Europe/Madrid", hour: "2-digit", minute: "2-digit", hour12: false,
+    }).format(d);
+
+  const events = useMemo(
+    () =>
+      appts
+        .filter((a) => showCancelled || a.status === "confirmed")
+        .map((a) => ({
+          id: a.id,
+          start: a.starts_at,
+          end: a.ends_at,
+          title: `${a.clients?.name || "Cliente"} — ${a.services?.name || ""}`,
+          editable: a.status === "confirmed",
+          classNames: [
+            a.status === "cancelled" ? "ev-cancelled" : a.status === "no_show" ? "ev-noshow" : "ev-ok",
+            selected?.id === a.id ? "ev-selected" : "",
+          ],
+          extendedProps: { appt: a },
+        })),
+    [appts, showCancelled, selected]
+  );
+
+  // Cambio de vista o de semana: cargar el rango visible
+  function onDatesSet(info) {
+    const from = madridDate(info.start);
+    const toExclusive = madridDate(info.end);
+    setRange({ from, to: addDays(toExclusive, -1) });
+  }
+
+  // Arrastrar una cita = reprogramarla (el servidor valida hueco, horario y cierres)
+  async function onEventDrop(info) {
+    const a = info.event.extendedProps.appt;
+    const start = info.event.start;
     setError("");
-    reload();
-  }, [reload]);
-
-  // Citas agrupadas por día (fecha de Madrid)
-  const byDay = useMemo(() => {
-    const m = new Map();
-    for (const a of data || []) {
-      const k = madridDay(a.starts_at);
-      if (!m.has(k)) m.set(k, []);
-      m.get(k).push(a);
-    }
-    return m;
-  }, [data]);
-
-  function shift(dir) {
-    if (view === "day") setAnchor(addDays(anchor, dir));
-    else if (view === "week") setAnchor(addDays(anchor, 7 * dir));
-    else {
-      const [y, m] = anchor.split("-").map(Number);
-      const total = y * 12 + (m - 1) + dir;
-      const ny = Math.floor(total / 12);
-      const nm = (total % 12) + 1;
-      setAnchor(`${ny}-${String(nm).padStart(2, "0")}-01`);
+    setNotice("");
+    try {
+      await api("appointments", {
+        method: "PATCH",
+        body: JSON.stringify({
+          id: a.id,
+          serviceId: a.services?.id,
+          employeeId: a.employees?.id,
+          date: madridDate(start),
+          startsAt: start.toISOString(),
+        }),
+      });
+      setNotice(`Cita de ${a.clients?.name} movida al ${start.toLocaleString("es-ES", { timeZone: "Europe/Madrid", weekday: "long", day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" })}. Si tiene email, se le ha avisado.`);
+      load();
+    } catch (e) {
+      info.revert();
+      setError(`No se pudo mover la cita: ${e.message}`);
     }
   }
 
-  const title = useMemo(() => {
-    const d = new Date(`${anchor}T12:00:00Z`);
-    if (view === "day") {
-      return d.toLocaleDateString("es-ES", {
-        weekday: "long", day: "numeric", month: "long", timeZone: "UTC",
-      });
-    }
-    if (view === "week") {
-      const mon = mondayOf(anchor);
-      const sun = addDays(mon, 6);
-      const dm = new Date(`${mon}T12:00:00Z`);
-      const ds = new Date(`${sun}T12:00:00Z`);
-      const f = (x, withMonth) =>
-        x.toLocaleDateString("es-ES", withMonth ? { day: "numeric", month: "short", timeZone: "UTC" } : { day: "numeric", timeZone: "UTC" });
-      const sameMonth = mon.slice(0, 7) === sun.slice(0, 7);
-      return sameMonth ? `${f(dm, false)} – ${f(ds, true)}` : `${f(dm, true)} – ${f(ds, true)}`;
-    }
-    return d.toLocaleDateString("es-ES", { month: "long", year: "numeric", timeZone: "UTC" });
-  }, [view, anchor]);
+  // Clic en una cita: panel de acciones
+  function onEventClick(info) {
+    setSelected(info.event.extendedProps.appt);
+    setEditing(null);
+    setShowNew(false);
+    setNotice("");
+    setError("");
+  }
+
+  // Clic en un hueco vacío: nueva cita con día (y hora) precargados
+  function onDateClick(info) {
+    setNewDate(madridDate(info.date));
+    setNewTime(info.view.type === "dayGridMonth" ? null : madridTime(info.date));
+    setShowNew(true);
+    setSelected(null);
+    setEditing(null);
+    setNotice("");
+    setError("");
+  }
 
   async function setStatus(id, status) {
+    setError("");
     try {
       await api("appointments", { method: "PATCH", body: JSON.stringify({ id, status }) });
-      reload();
+      setSelected(null);
+      load();
     } catch (e) {
       setError(e.message);
     }
@@ -352,269 +386,154 @@ function Agenda({ api }) {
 
   async function removeAppt(id) {
     if (!window.confirm("¿Borrar esta cita definitivamente? (para mantener el historial, mejor cancélala)")) return;
+    setError("");
     try {
       await api(`appointments?id=${id}`, { method: "DELETE" });
-      reload();
+      setSelected(null);
+      load();
     } catch (e) {
       setError(e.message);
     }
   }
 
-  function goDay(dstr) {
-    setAnchor(dstr);
-    setView("day");
-  }
-
-  // ----- Vista de día: timeline de citas -----
-  function DayView() {
-    const appts = byDay.get(anchor) || [];
-    const confirmed = appts.filter((a) => a.status === "confirmed");
-    const revenue = confirmed.reduce((acc, a) => acc + Number(a.services?.price_eur || 0), 0);
-    const minutes = confirmed.reduce(
-      (acc, a) => acc + Math.round((new Date(a.ends_at) - new Date(a.starts_at)) / 60000),
-      0
-    );
-    return (
-      <>
-        {appts.length > 0 && (
-          <p className="agenda-summary">
-            {confirmed.length} {confirmed.length === 1 ? "cita" : "citas"}
-            {minutes > 0 && ` · ${Math.floor(minutes / 60)} h ${minutes % 60 ? `${minutes % 60} min` : ""}`}
-            {revenue > 0 && ` · ${revenue.toFixed(2)} €`}
-          </p>
-        )}
-        {appts.length === 0 ? (
-          <p style={{ color: "var(--muted)", marginTop: 16 }}>
-            No hay citas este día.{" "}
-            <button type="button" className="linklike" onClick={() => { setShowNew(true); setNewDone(""); }}>
-              ➕ Apuntar una
-            </button>
-          </p>
-        ) : (
-          <div className="day-timeline">
-            {appts.map((a) => (
-              <div key={a.id} className={`appt-card ${a.status !== "confirmed" ? "is-cancelled" : ""}`}>
-                <div className="appt-time">
-                  <strong>{fmtTimeMadrid(a.starts_at)}</strong>
-                  <span>{fmtTimeMadrid(a.ends_at)}</span>
-                </div>
-                <div className="appt-info">
-                  <div className="appt-line1">
-                    <strong>{a.clients?.name}</strong>
-                    {a.status === "cancelled" && <span className="badge cancelled">Cancelada</span>}
-                    {a.status === "no_show" && <span className="badge noshow">No vino</span>}
-                  </div>
-                  <div className="appt-line2">
-                    ✂️ {a.services?.name} · {Number(a.services?.price_eur || 0).toFixed(2)} € ·{" "}
-                    <span style={{ color: "var(--muted)" }}>{a.employees?.name}</span>
-                  </div>
-                  <div className="appt-line3">
-                    📞 <a href={`tel:${a.clients?.phone}`}>{a.clients?.phone}</a>
-                    {(a.appointment_products || []).length > 0 && (
-                      <span>
-                        {" "}· 🧴{" "}
-                        {(a.appointment_products || [])
-                          .map((p) => `${p.products?.name} x${p.quantity}`)
-                          .join(", ")}
-                      </span>
-                    )}
-                  </div>
-                </div>
-                <div className="appt-actions">
-                  {a.status === "confirmed" ? (
-                    <>
-                      <button
-                        className="secondary small"
-                        title="Editar cita (servicio, día u hora)"
-                        onClick={() => setEditing(editing?.id === a.id ? null : a)}
-                      >
-                        ✏️
-                      </button>
-                      <button className="danger small" onClick={() => setStatus(a.id, "cancelled")}>
-                        Cancelar
-                      </button>
-                      {new Date(a.starts_at) < new Date() && (
-                        <button
-                          className="secondary small"
-                          title="El cliente no se presentó"
-                          onClick={() => setStatus(a.id, "no_show")}
-                        >
-                          👻 No vino
-                        </button>
-                      )}
-                    </>
-                  ) : (
-                    <button className="secondary small" onClick={() => setStatus(a.id, "confirmed")}>
-                      Reactivar
-                    </button>
-                  )}
-                  <button className="secondary small" title="Borrar definitivamente" onClick={() => removeAppt(a.id)}>
-                    🗑
-                  </button>
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </>
-    );
-  }
-
-  // ----- Vista de semana: 7 columnas -----
-  function WeekView() {
-    const mon = mondayOf(anchor);
-    const days = Array.from({ length: 7 }, (_, i) => addDays(mon, i));
-    const hoy = todayStr();
-    return (
-      <div className="week-grid">
-        {days.map((dstr) => {
-          const appts = (byDay.get(dstr) || []).filter((a) => a.status === "confirmed");
-          const d = new Date(`${dstr}T12:00:00Z`);
-          return (
-            <div key={dstr} className={`wk-col ${dstr === hoy ? "today" : ""}`}>
-              <button className="wk-head" onClick={() => goDay(dstr)} title="Ver este día">
-                <span className="wk-dow">
-                  {d.toLocaleDateString("es-ES", { weekday: "short", timeZone: "UTC" })}
-                </span>
-                <span className="wk-num">{Number(dstr.slice(8))}</span>
-              </button>
-              <div className="wk-appts">
-                {appts.length === 0 ? (
-                  <span className="wk-empty">—</span>
-                ) : (
-                  appts.map((a) => (
-                    <button key={a.id} className="appt-block" onClick={() => goDay(dstr)} title={`${a.clients?.name} · ${a.services?.name}`}>
-                      <span className="ab-time">{fmtTimeMadrid(a.starts_at)}</span>
-                      <span className="ab-name">{a.clients?.name}</span>
-                      <span className="ab-svc">{a.services?.name}</span>
-                    </button>
-                  ))
-                )}
-                <button
-                  type="button"
-                  className="wk-add"
-                  title="Apuntar cita este día"
-                  onClick={() => {
-                    setAnchor(dstr);
-                    setShowNew(true);
-                    setNewDone("");
-                  }}
-                >
-                  ➕
-                </button>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    );
-  }
-
-  // ----- Vista de mes: calendario -----
-  function MonthView() {
-    const { first, last } = monthRange(anchor);
-    const start = mondayOf(first);
-    const cells = [];
-    let c = start;
-    while (c <= last || cells.length % 7 !== 0) {
-      cells.push(c);
-      c = addDays(c, 1);
-      if (cells.length > 42) break;
-    }
-    const hoy = todayStr();
-    const month = anchor.slice(0, 7);
-    return (
-      <div className="month-grid">
-        {["L", "M", "X", "J", "V", "S", "D"].map((h) => (
-          <div key={h} className="mg-head">{h}</div>
-        ))}
-        {cells.map((dstr) => {
-          const appts = (byDay.get(dstr) || []).filter((a) => a.status === "confirmed");
-          const inMonth = dstr.slice(0, 7) === month;
-          return (
-            <button
-              key={dstr}
-              className={`mg-cell ${inMonth ? "" : "out"} ${dstr === hoy ? "today" : ""}`}
-              onClick={() => goDay(dstr)}
-              title={appts.length ? `${appts.length} citas` : "Sin citas"}
-            >
-              <span className="mg-num">{Number(dstr.slice(8))}</span>
-              {inMonth && appts.length > 0 && <span className="mg-count">{appts.length}</span>}
-            </button>
-          );
-        })}
-      </div>
-    );
-  }
+  const sel = selected;
+  const selPast = sel && new Date(sel.starts_at) < new Date();
 
   return (
     <div className="card">
-      <div className="agenda-toolbar">
-        <div className="pills view-pills">
-          {[["day", "Día"], ["week", "Semana"], ["month", "Mes"]].map(([v, label]) => (
-            <button
-              key={v}
-              type="button"
-              className={`pill ${view === v ? "selected" : ""}`}
-              onClick={() => setView(v)}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-        <div className="agenda-nav">
-          <button className="secondary small" onClick={() => shift(-1)} aria-label="Anterior">◀</button>
-          <button className="secondary small" onClick={() => setAnchor(todayStr())}>Hoy</button>
-          <button className="secondary small" onClick={() => shift(1)} aria-label="Siguiente">▶</button>
-          <span className="agenda-title">{title}</span>
-        </div>
-        <div className="agenda-right">
+      <div className="agenda-toolbar" style={{ marginBottom: 10 }}>
+        <button
+          onClick={() => {
+            setShowNew((s) => !s);
+            setNewTime(null);
+            setSelected(null);
+            setNotice("");
+          }}
+        >
+          {showNew ? "Cerrar" : "➕ Nueva cita"}
+        </button>
+        <label className="consent-row" style={{ margin: 0, alignItems: "center" }}>
           <input
-            type="date"
-            value={anchor}
-            onChange={(e) => e.target.value && setAnchor(e.target.value)}
-            aria-label="Ir a una fecha"
+            type="checkbox"
+            checked={showCancelled}
+            onChange={(e) => setShowCancelled(e.target.checked)}
           />
-          <button onClick={() => { setShowNew((s) => !s); setNewDone(""); }}>
-            {showNew ? "Cerrar" : "➕ Nueva cita"}
-          </button>
-        </div>
+          <span>Ver canceladas y no-shows</span>
+        </label>
+        <span className="cal-hint">
+          Arrastra una cita para cambiarla de hora o de día · Toca un hueco libre para apuntar una cita
+        </span>
       </div>
 
-      {newDone && <p className="msg-ok">{newDone}</p>}
+      {notice && <p className="msg-ok">{notice}</p>}
+      {error && <p className="msg-error">{error}</p>}
+
+      {showNew && (
+        <NewAppointment
+          api={api}
+          defaultDate={newDate}
+          defaultTime={newTime}
+          onDone={(msg) => {
+            setShowNew(false);
+            setNotice(msg);
+            load();
+          }}
+        />
+      )}
+
       {editing && (
         <EditAppointment
           api={api}
           appt={editing}
           onDone={(msg) => {
             setEditing(null);
-            setNewDone(msg);
-            reload();
+            setSelected(null);
+            setNotice(msg);
+            load();
           }}
           onCancel={() => setEditing(null)}
         />
       )}
-      {showNew && (
-        <NewAppointment
-          api={api}
-          defaultDate={view === "month" ? todayStr() : anchor}
-          onDone={(msg) => {
-            setShowNew(false);
-            setNewDone(msg);
-            reload();
+
+      {sel && !editing && (
+        <div className="appt-detail">
+          <div className="appt-detail-info">
+            <strong style={{ fontSize: "1.05rem" }}>{sel.clients?.name}</strong>
+            {sel.status === "cancelled" && <span className="badge cancelled">Cancelada</span>}
+            {sel.status === "no_show" && <span className="badge noshow">No vino</span>}
+            <div style={{ color: "var(--muted)", fontSize: "0.9rem", marginTop: 4 }}>
+              {new Date(sel.starts_at).toLocaleString("es-ES", {
+                timeZone: "Europe/Madrid", weekday: "long", day: "numeric", month: "long", hour: "2-digit", minute: "2-digit",
+              })}
+              {" – "}
+              {fmtTimeMadrid(sel.ends_at)}
+            </div>
+            <div style={{ fontSize: "0.92rem", marginTop: 4 }}>
+              ✂️ {sel.services?.name} · {Number(sel.services?.price_eur || 0).toFixed(2)} € ·{" "}
+              <span style={{ color: "var(--muted)" }}>{sel.employees?.name}</span>
+            </div>
+            <div style={{ fontSize: "0.88rem", color: "var(--muted)", marginTop: 4 }}>
+              📞 <a href={`tel:${sel.clients?.phone}`} style={{ color: "var(--gold-strong)" }}>{sel.clients?.phone}</a>
+              {(sel.appointment_products || []).length > 0 && (
+                <> · 🧴 {(sel.appointment_products || []).map((p) => `${p.products?.name} x${p.quantity}`).join(", ")}</>
+              )}
+            </div>
+          </div>
+          <div className="appt-detail-actions">
+            {sel.status === "confirmed" ? (
+              <>
+                <button className="secondary small" onClick={() => setEditing(sel)}>✏️ Editar</button>
+                <button className="danger small" onClick={() => setStatus(sel.id, "cancelled")}>Cancelar</button>
+                {selPast && (
+                  <button className="secondary small" onClick={() => setStatus(sel.id, "no_show")}>👻 No vino</button>
+                )}
+              </>
+            ) : (
+              <button className="secondary small" onClick={() => setStatus(sel.id, "confirmed")}>Reactivar</button>
+            )}
+            <button className="secondary small" title="Borrar definitivamente" onClick={() => removeAppt(sel.id)}>🗑</button>
+            <button className="secondary small" onClick={() => setSelected(null)}>Cerrar</button>
+          </div>
+        </div>
+      )}
+
+      <div className="fc-wrap">
+        <FullCalendar
+          plugins={[timeGridPlugin, dayGridPlugin, interactionPlugin]}
+          initialView="timeGridWeek"
+          locale={esLocale}
+          firstDay={1}
+          headerToolbar={{
+            left: "prev,today,next",
+            center: "title",
+            right: "timeGridDay,timeGridWeek,dayGridMonth",
           }}
+          buttonText={{ today: "Hoy", day: "Día", week: "Semana", month: "Mes" }}
+          slotMinTime="08:00:00"
+          slotMaxTime="22:00:00"
+          slotDuration="00:30:00"
+          scrollTime="09:00:00"
+          allDaySlot={false}
+          nowIndicator
+          height="auto"
+          expandRows
+          dayMaxEventRows={4}
+          events={events}
+          editable
+          eventDurationEditable={false}
+          eventOverlap={false}
+          longPressDelay={300}
+          datesSet={onDatesSet}
+          eventDrop={onEventDrop}
+          eventClick={onEventClick}
+          dateClick={onDateClick}
+          eventTimeFormat={{ hour: "2-digit", minute: "2-digit", hour12: false }}
         />
-      )}
-      {error && <p className="msg-error">{error}</p>}
-      {!data ? (
-        <p>Cargando…</p>
-      ) : view === "day" ? (
-        <DayView />
-      ) : view === "week" ? (
-        <WeekView />
-      ) : (
-        <MonthView />
-      )}
+      </div>
+      <p className="cal-legend">
+        <span className="lg lg-ok" /> Confirmada · <span className="lg lg-cancelled" /> Cancelada ·{" "}
+        <span className="lg lg-noshow" /> No vino — las citas pasadas no se pueden arrastrar (edítalas con ✏️)
+      </p>
     </div>
   );
 }
@@ -710,7 +629,7 @@ function Services({ api }) {
 
 // ---------- Nueva cita (creada por el personal) ----------
 
-function NewAppointment({ api, defaultDate, onDone }) {
+function NewAppointment({ api, defaultDate, defaultTime, onDone }) {
   const [services, setServices] = useState([]);
   const [employees, setEmployees] = useState([]);
   const [clients, setClients] = useState([]);
@@ -780,9 +699,17 @@ function NewAppointment({ api, defaultDate, onDone }) {
     const params = new URLSearchParams({ date, employeeId, serviceId });
     fetch(`/api/availability?${params}`)
       .then((r) => r.json())
-      .then((d) => setSlots(d.slots ?? []))
+      .then((d) => {
+        const list = d.slots ?? [];
+        setSlots(list);
+        // Hora precargada (clic en un hueco del calendario)
+        if (defaultTime) {
+          const m = list.find((sl) => sl.free && sl.time === defaultTime);
+          if (m) setStartsAt(m.startsAt);
+        }
+      })
       .catch(() => setError("No se pudo consultar la disponibilidad"));
-  }, [serviceId, employeeId, date]);
+  }, [serviceId, employeeId, date, defaultTime]);
 
   const clientName = clientMode === "existente" ? selected?.name || "" : name;
   const clientPhone = clientMode === "existente" ? selected?.phone || "" : phone;

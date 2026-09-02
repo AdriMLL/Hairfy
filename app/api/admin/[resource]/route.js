@@ -121,7 +121,7 @@ export async function GET(request, { params }) {
     const { data, error } = await db
       .from("appointments")
       .select(
-        "id,starts_at,ends_at,status,employees(name),services(name,price_eur),clients(name,phone,email),appointment_products(quantity,products(name))"
+        "id,starts_at,ends_at,status,employees(id,name),services(id,name,price_eur),clients(id,name,phone,email),appointment_products(quantity,products(name))"
       )
       .gte("starts_at", rangeStart.toISOString())
       .lt("starts_at", rangeEnd.toISOString())
