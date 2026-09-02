@@ -2,7 +2,7 @@ import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { generateAccessCode, normalizeCode, normalizePhone, validateCustomCode } from "@/lib/code";
 import { authBlocked, authFail, authOk, overActionLimit, clientIp, tooManyResponse } from "@/lib/rateLimit";
 import { safeEqual } from "@/lib/security";
-import { sendCodeRecovery } from "@/lib/email";
+import { sendCodeRecovery, sendWelcome } from "@/lib/email";
 import { logActivity } from "@/lib/audit";
 
 export const dynamic = "force-dynamic";
@@ -112,6 +112,10 @@ export async function POST(request) {
       return Response.json({ error: "No se pudo crear la ficha" }, { status: 500 });
     }
     await logActivity("cliente", "ficha_creada", { cliente: name, telefono: phone, via: "web" });
+    // Bienvenida con el código por escrito (solo si dio email)
+    if (email) {
+      await sendWelcome(email, { name, code: accessCode });
+    }
     return Response.json({ ok: true, name, accessCode, email });
   }
 
