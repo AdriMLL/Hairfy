@@ -5,7 +5,7 @@ import { getBusinessHours, sanitizeHours } from "@/lib/hours";
 import { generateAccessCode, normalizePhone } from "@/lib/code";
 import { logActivity } from "@/lib/audit";
 import { sendBookingConfirmation, sendBookingUpdate } from "@/lib/email";
-import { getClosure, closureMessage } from "@/lib/closures";
+import { getClosure, closureMessage, closedRangesAsBusy } from "@/lib/closures";
 
 export const dynamic = "force-dynamic";
 
@@ -201,7 +201,7 @@ export async function GET(request, { params }) {
     const since = new Date(Date.now() - 30 * 86400000).toISOString().slice(0, 10);
     const { data, error } = await db
       .from("closures")
-      .select("id,starts_on,ends_on,reason,employee_id,employees(name)")
+      .select("id,starts_on,ends_on,reason,employee_id,starts_time,ends_time,employees(name)")
       .gte("ends_on", since)
       .order("starts_on")
       .limit(200);
@@ -447,11 +447,12 @@ export async function POST(request, { params }) {
       .gte("ends_at", dayStart)
       .lte("starts_at", dayEnd);
 
-    const slots = buildSlots(date, service.duration_min, busy || [], hours);
+    const blockedRanges = await closedRangesAsBusy(db2, date, employeeId);
+    const slots = buildSlots(date, service.duration_min, [...(busy || []), ...blockedRanges], hours);
     const slot = slots.find((s) => s.startsAt === startsAt && s.free);
     if (!slot) {
       return Response.json(
-        { error: "Ese hueco no está disponible. Elige otra hora." },
+        { error: "Ese hueco no está disponible (ocupado o cerrado). Elige otra hora." },
         { status: 409 }
       );
     }
@@ -543,6 +544,22 @@ export async function POST(request, { params }) {
       return Response.json({ error: "Fechas no válidas (inicio ≤ fin)" }, { status: 400 });
     }
     const reason = typeof body?.reason === "string" ? body.reason.trim().slice(0, 120) || null : null;
+
+    // Horas opcionales: si faltan, el cierre es de día(s) completo(s)
+    const isTime = (t) => typeof t === "string" && /^([01]\d|2[0-3]):[0-5]\d$/.test(t);
+    let startsTime = null;
+    let endsTime = null;
+    if (body?.startsTime || body?.endsTime) {
+      if (!isTime(body?.startsTime) || !isTime(body?.endsTime)) {
+        return Response.json({ error: "Horas no válidas (formato HH:MM)" }, { status: 400 });
+      }
+      if (body.endsTime <= body.startsTime) {
+        return Response.json({ error: "La hora de fin debe ser posterior a la de inicio" }, { status: 400 });
+      }
+      startsTime = body.startsTime;
+      endsTime = body.endsTime;
+    }
+
     let employeeId = null;
     if (body?.employeeId) {
       const { data: emp } = await supabaseAdmin()
@@ -553,14 +570,53 @@ export async function POST(request, { params }) {
       if (!emp) return Response.json({ error: "Empleado no válido" }, { status: 400 });
       employeeId = emp.id;
     }
-    const { data, error } = await supabaseAdmin()
+
+    const dbC = supabaseAdmin();
+    const { data, error } = await dbC
       .from("closures")
-      .insert({ starts_on: startsOn, ends_on: endsOn, reason, employee_id: employeeId })
-      .select("id,starts_on,ends_on,reason,employee_id,employees(name)")
+      .insert({
+        starts_on: startsOn,
+        ends_on: endsOn,
+        reason,
+        employee_id: employeeId,
+        starts_time: startsTime,
+        ends_time: endsTime,
+      })
+      .select("id,starts_on,ends_on,reason,employee_id,starts_time,ends_time,employees(name)")
       .single();
     if (error) return Response.json({ error: "No se pudo guardar el cierre" }, { status: 500 });
-    await logActivity("admin", "cierre_creado", { desde: startsOn, hasta: endsOn, motivo: reason });
-    return Response.json({ data });
+    await logActivity("admin", "cierre_creado", {
+      desde: startsOn,
+      hasta: endsOn,
+      motivo: reason,
+      tramo: startsTime ? `${startsTime}-${endsTime}` : "dia completo",
+    });
+
+    // ¿Hay citas confirmadas dentro del cierre? Se avisa (no se tocan)
+    const rangeStart = localToUtc(startsOn, startsTime || "00:00").toISOString();
+    const rangeEnd = startsTime
+      ? localToUtc(endsOn, endsTime).toISOString()
+      : new Date(localToUtc(endsOn, "00:00").getTime() + 86400000).toISOString();
+    let q = dbC
+      .from("appointments")
+      .select("id,starts_at,clients(name,phone)")
+      .eq("status", "confirmed")
+      .gte("starts_at", rangeStart)
+      .lt("starts_at", rangeEnd)
+      .order("starts_at")
+      .limit(50);
+    if (employeeId) q = q.eq("employee_id", employeeId);
+    const { data: affected } = await q;
+
+    return Response.json({
+      data,
+      affected: (affected || []).map((a) => ({
+        id: a.id,
+        startsAt: a.starts_at,
+        client: a.clients?.name,
+        phone: a.clients?.phone,
+      })),
+    });
   }
 
   if (resource === "product-image") {
@@ -815,7 +871,8 @@ export async function PATCH(request, { params }) {
     // La propia cita no cuenta como ocupada
     const busyOthers = (busy || []).filter((b) => b.id !== id);
 
-    const slots = buildSlots(date, service.duration_min, busyOthers, hours);
+    const blockedRanges2 = await closedRangesAsBusy(db, date, employeeId);
+    const slots = buildSlots(date, service.duration_min, [...busyOthers, ...blockedRanges2], hours);
     const slot = slots.find((s) => s.startsAt === startsAt && s.free);
     if (!slot) {
       return Response.json(

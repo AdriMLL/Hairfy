@@ -1,7 +1,7 @@
 import { supabaseAdmin } from "@/lib/supabaseAdmin";
 import { buildSlots, isValidDateStr, isBookableDate, localToUtc } from "@/lib/availability";
 import { getBusinessHours, sanitizeHours } from "@/lib/hours";
-import { getClosure } from "@/lib/closures";
+import { getClosure, closedRangesAsBusy } from "@/lib/closures";
 
 export const dynamic = "force-dynamic";
 
@@ -54,7 +54,9 @@ export async function GET(request) {
   if (bErr) {
     return Response.json({ error: "Error al consultar la agenda" }, { status: 500 });
   }
-  const busy = (busyRaw || []).filter((b) => b.id !== excludeId);
+  // Ratos cerrados (médico, recado…) cuentan como ocupados
+  const blocked = await closedRangesAsBusy(db, date, employeeId);
+  const busy = [...(busyRaw || []).filter((b) => b.id !== excludeId), ...blocked];
 
   // Horario propio del empleado (si lo tiene); si no, el general
   const effectiveHours = sanitizeHours(employeeRow.hours) ?? hours;

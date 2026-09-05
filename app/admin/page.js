@@ -300,11 +300,16 @@ function Agenda({ api }) {
   const [newDate, setNewDate] = useState(todayStr());
   const [newTime, setNewTime] = useState(null);
 
+  const [closures, setClosures] = useState([]);
+
   const load = useCallback(() => {
     if (!range) return;
     api(`appointments?from=${range.from}&to=${range.to}`)
       .then((d) => setAppts(d.data || []))
       .catch((e) => setError(e.message));
+    api("closures")
+      .then((d) => setClosures(d.data || []))
+      .catch(() => {});
   }, [api, range]);
   useEffect(load, [load]);
 
@@ -333,6 +338,30 @@ function Agenda({ api }) {
         })),
     [appts, showCancelled, selected]
   );
+
+  // Cierres pintados de fondo (día completo o solo un rato)
+  const closureEvents = useMemo(
+    () =>
+      (closures || []).map((c) => {
+        const full = !c.starts_time || !c.ends_time;
+        const endExclusive = addDays(c.ends_on, 1);
+        return {
+          id: `cl-${c.id}`,
+          display: "background",
+          classNames: ["ev-closed"],
+          title: c.reason || "Cerrado",
+          ...(full
+            ? { start: c.starts_on, end: endExclusive, allDay: true }
+            : {
+                start: `${c.starts_on}T${String(c.starts_time).slice(0, 5)}:00`,
+                end: `${c.ends_on}T${String(c.ends_time).slice(0, 5)}:00`,
+              }),
+        };
+      }),
+    [closures]
+  );
+
+  const allEvents = useMemo(() => [...events, ...closureEvents], [events, closureEvents]);
 
   // Cambio de vista o de semana: cargar el rango visible
   function onDatesSet(info) {
@@ -387,6 +416,36 @@ function Agenda({ api }) {
     setError("");
   }
 
+  // Seleccionar un rato en el calendario = bloquearlo (médico, recado…)
+  async function onSelect(info) {
+    if (info.view.type === "dayGridMonth") return; // en vista mes no aplica
+    const day = madridDate(info.start);
+    const from = madridTime(info.start);
+    const to = madridTime(info.end);
+    const motivo = window.prompt(
+      `¿Bloquear el ${day} de ${from} a ${to}?\n\nEscribe el motivo (opcional) y acepta:`,
+      ""
+    );
+    if (motivo === null) return; // cancelado
+    setError("");
+    setNotice("");
+    try {
+      const res = await api("closures", {
+        method: "POST",
+        body: JSON.stringify({ startsOn: day, endsOn: day, startsTime: from, endsTime: to, reason: motivo || undefined }),
+      });
+      const n = (res.affected || []).length;
+      setNotice(
+        n > 0
+          ? `Rato bloqueado (${from}–${to}). ⚠️ Ojo: hay ${n} ${n === 1 ? "cita ya reservada" : "citas ya reservadas"} dentro — muévelas o cancélalas avisando al cliente.`
+          : `Rato bloqueado: el ${day} de ${from} a ${to} ya no acepta reservas.`
+      );
+      load();
+    } catch (e) {
+      setError(`No se pudo bloquear: ${e.message}`);
+    }
+  }
+
   async function setStatus(id, status) {
     setError("");
     try {
@@ -435,7 +494,7 @@ function Agenda({ api }) {
           <span>Ver canceladas y no-shows</span>
         </label>
         <span className="cal-hint">
-          Arrastra una cita para cambiarla de hora o de día · Toca un hueco libre para apuntar una cita
+          Arrastra una cita para moverla · Toca un hueco para apuntar una cita · Selecciona un rato para bloquearlo
         </span>
       </div>
 
@@ -527,8 +586,12 @@ function Agenda({ api }) {
           nowIndicator
           height="auto"
           dayMaxEventRows={4}
-          events={events}
+          events={allEvents}
           editable
+          selectable
+          selectMirror
+          select={onSelect}
+          selectMinDistance={8}
           eventDurationEditable={false}
           eventOverlap={false}
           longPressDelay={300}
@@ -541,7 +604,7 @@ function Agenda({ api }) {
       </div>
       <p className="cal-legend">
         <span className="lg lg-ok" /> Confirmada · <span className="lg lg-cancelled" /> Cancelada ·{" "}
-        <span className="lg lg-noshow" /> No vino — las citas pasadas no se pueden arrastrar (edítalas con ✏️)
+        <span className="lg lg-noshow" /> No vino · <span className="lg lg-closed" /> Cerrado — las citas pasadas no se pueden arrastrar (edítalas con ✏️)
       </p>
     </div>
   );
@@ -1474,6 +1537,10 @@ function Cierres({ api }) {
   const [reason, setReason] = useState("");
   const [who, setWho] = useState("");
   const [ok, setOk] = useState("");
+  const [affected, setAffected] = useState([]);
+  const [partial, setPartial] = useState(false); // día completo vs tramo horario
+  const [startsTime, setStartsTime] = useState("16:00");
+  const [endsTime, setEndsTime] = useState("18:00");
 
   useEffect(() => {
     api("employees")
@@ -1486,17 +1553,23 @@ function Cierres({ api }) {
     setError("");
     setOk("");
     try {
-      await api("closures", {
+      const res = await api("closures", {
         method: "POST",
         body: JSON.stringify({
           startsOn,
           endsOn: endsOn < startsOn ? startsOn : endsOn,
           reason,
           employeeId: who || undefined,
+          ...(partial ? { startsTime, endsTime } : {}),
         }),
       });
       setReason("");
-      setOk("Cierre guardado: esos días ya no aceptan reservas.");
+      setAffected(res.affected || []);
+      setOk(
+        partial
+          ? `Cerrado de ${startsTime} a ${endsTime}: esas horas ya no aceptan reservas.`
+          : "Cierre guardado: esos días ya no aceptan reservas."
+      );
       reload();
     } catch (e2) {
       setError(e2.message);
@@ -1522,18 +1595,55 @@ function Cierres({ api }) {
     <div className="card" style={{ marginTop: 18 }}>
       <h2>Festivos y vacaciones</h2>
       <p style={{ color: "var(--muted)", marginTop: 0, fontSize: "0.9rem" }}>
-        Cierra días sueltos o periodos (festivos, vacaciones…). Los clientes no
-        podrán reservar en esos días — de todo el local o solo de un empleado.
+        Cierra días completos (festivos, vacaciones…) o solo un rato de un día
+        (médico, un recado…). Los clientes no podrán reservar en ese tiempo —
+        de todo el local o solo de un empleado. También puedes bloquear un rato
+        arrastrando sobre el calendario en la Agenda.
       </p>
+      <div className="pills" style={{ marginBottom: 12 }}>
+        <button
+          type="button"
+          className={`pill ${!partial ? "selected" : ""}`}
+          onClick={() => { setPartial(false); setOk(""); setAffected([]); }}
+        >
+          📅 Día(s) completo(s)
+        </button>
+        <button
+          type="button"
+          className={`pill ${partial ? "selected" : ""}`}
+          onClick={() => { setPartial(true); setOk(""); setAffected([]); }}
+        >
+          ⏰ Solo un rato
+        </button>
+      </div>
       <form className="row" onSubmit={add}>
         <div>
-          <label>Desde</label>
-          <input type="date" value={startsOn} onChange={(e) => setStartsOn(e.target.value)} required />
+          <label>{partial ? "Día" : "Desde"}</label>
+          <input
+            type="date"
+            value={startsOn}
+            onChange={(e) => { setStartsOn(e.target.value); if (partial) setEndsOn(e.target.value); }}
+            required
+          />
         </div>
-        <div>
-          <label>Hasta (incluido)</label>
-          <input type="date" value={endsOn} min={startsOn} onChange={(e) => setEndsOn(e.target.value)} required />
-        </div>
+        {!partial && (
+          <div>
+            <label>Hasta (incluido)</label>
+            <input type="date" value={endsOn} min={startsOn} onChange={(e) => setEndsOn(e.target.value)} required />
+          </div>
+        )}
+        {partial && (
+          <>
+            <div>
+              <label>Desde las</label>
+              <input type="time" step="900" value={startsTime} onChange={(e) => setStartsTime(e.target.value)} required />
+            </div>
+            <div>
+              <label>Hasta las</label>
+              <input type="time" step="900" value={endsTime} onChange={(e) => setEndsTime(e.target.value)} required />
+            </div>
+          </>
+        )}
         <div>
           <label>Motivo (opcional)</label>
           <input value={reason} maxLength={120} placeholder="Vacaciones, festivo…" onChange={(e) => setReason(e.target.value)} />
@@ -1549,22 +1659,47 @@ function Cierres({ api }) {
         </div>
         <div style={{ flex: "0 0 auto" }}>
           <label style={{ visibility: "hidden" }}>.</label>
-          <button type="submit">Cerrar días</button>
+          <button type="submit">{partial ? "Bloquear ese rato" : "Cerrar días"}</button>
         </div>
       </form>
       {ok && <p className="msg-ok">{ok}</p>}
+      {affected.length > 0 && (
+        <div className="affected-box">
+          <strong>⚠️ Hay {affected.length} {affected.length === 1 ? "cita ya reservada" : "citas ya reservadas"} en ese periodo.</strong>
+          <p style={{ margin: "6px 0 8px", color: "var(--muted)", fontSize: "0.85rem" }}>
+            No se han tocado: decide tú si las mueves o las cancelas (avisando al cliente).
+          </p>
+          <ul>
+            {affected.map((a) => (
+              <li key={a.id}>
+                {new Date(a.startsAt).toLocaleString("es-ES", {
+                  timeZone: "Europe/Madrid", day: "numeric", month: "short", hour: "2-digit", minute: "2-digit",
+                })}
+                {" — "}
+                <strong>{a.client}</strong>{" "}
+                <a href={`tel:${a.phone}`} style={{ color: "var(--gold-strong)" }}>{a.phone}</a>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
       {error && <p className="msg-error">{error}</p>}
       {data && data.length > 0 && (
         <div className="table-scroll">
           <table>
             <thead>
-              <tr><th>Desde</th><th>Hasta</th><th>Motivo</th><th>Afecta a</th><th></th></tr>
+              <tr><th>Desde</th><th>Hasta</th><th>Horario</th><th>Motivo</th><th>Afecta a</th><th></th></tr>
             </thead>
             <tbody>
               {data.map((c) => (
                 <tr key={c.id}>
                   <td>{fmtDay(c.starts_on)}</td>
                   <td>{fmtDay(c.ends_on)}</td>
+                  <td>
+                    {c.starts_time && c.ends_time
+                      ? `${String(c.starts_time).slice(0, 5)} – ${String(c.ends_time).slice(0, 5)}`
+                      : "Día completo"}
+                  </td>
                   <td>{c.reason || "—"}</td>
                   <td>{c.employees?.name ? `Solo ${c.employees.name}` : "Todo el local"}</td>
                   <td>

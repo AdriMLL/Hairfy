@@ -9,7 +9,7 @@ import { logActivity } from "@/lib/audit";
 // Máximo de citas futuras confirmadas por cliente (anti-abuso)
 const MAX_ACTIVE_APPOINTMENTS = 3;
 import { sendBookingConfirmation, sendStaffNotification } from "@/lib/email";
-import { getClosure, closureMessage } from "@/lib/closures";
+import { getClosure, closureMessage, closedRangesAsBusy } from "@/lib/closures";
 
 export const dynamic = "force-dynamic";
 
@@ -113,7 +113,8 @@ export async function POST(request) {
     .gte("ends_at", dayStart)
     .lte("starts_at", dayEnd);
 
-  const slots = buildSlots(date, service.duration_min, busy || [], hours);
+  const blocked = await closedRangesAsBusy(db, date, employeeId);
+  const slots = buildSlots(date, service.duration_min, [...(busy || []), ...blocked], hours);
   const slot = slots.find((s) => s.startsAt === startsAt && s.free);
   if (!slot) {
     return Response.json(
